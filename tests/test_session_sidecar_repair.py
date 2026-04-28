@@ -168,6 +168,10 @@ class TestRepairStalePendingNoDeadlock:
                     assert result.pending_user_message is not None, (
                         "Pending fields preserved when lock is held (deadlock prevention)"
                     )
+                    assert sid not in models.SESSIONS, (
+                        "Still-stale session should not stay pinned in cache after "
+                        "lock-contended repair skip"
+                    )
             except Exception as exc:
                 worker_exc.append(exc)
             finally:
@@ -186,6 +190,42 @@ class TestRepairStalePendingNoDeadlock:
         assert len(worker_exc) == 0, (
             f"Worker raised exception: {worker_exc[0] if worker_exc else 'none'}"
         )
+
+    def test_lock_contended_skip_retries_on_next_cache_miss(self, hermes_home, monkeypatch):
+        """A lock-contended repair skip should not become stuck forever.
+
+        The first get_session() call happens while the per-session lock is held,
+        so repair must bail to avoid deadlock. The still-stale object is evicted
+        from SESSIONS, allowing a later get_session() after lock release to reload
+        from disk and repair normally.
+        """
+        sid = "stale_retry_sid"
+        s = _make_stale_session(session_id=sid, pending_msg="Recover me")
+        s.save()
+        _write_core_transcript(
+            hermes_home,
+            sid,
+            [
+                {"role": "user", "content": "Recover me"},
+                {"role": "assistant", "content": "Recovered answer"},
+            ],
+        )
+        models.SESSIONS.pop(sid, None)
+
+        lock = config._get_session_agent_lock(sid)
+        assert lock.acquire(blocking=False)
+        try:
+            skipped = models.get_session(sid)
+            assert skipped.pending_user_message == "Recover me"
+            assert sid not in models.SESSIONS
+        finally:
+            lock.release()
+
+        repaired = models.get_session(sid)
+        assert repaired.pending_user_message is None
+        assert repaired.active_stream_id is None
+        assert [m["content"] for m in repaired.messages] == ["Recover me", "Recovered answer"]
+        assert models.SESSIONS.get(sid) is repaired
 
 
 class TestDraftRecovery:

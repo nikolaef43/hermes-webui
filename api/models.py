@@ -659,7 +659,18 @@ def get_session(sid, metadata_only=False):
                 SESSIONS.popitem(last=False)  # evict least recently used
         if not metadata_only:
             try:
-                _repair_stale_pending(s)
+                repaired = _repair_stale_pending(s)
+                # If repair had to bail because the per-session lock was held,
+                # do not pin the still-stale sidecar in the LRU cache forever.
+                # Leaving it cached would prevent future get_session() calls from
+                # re-entering the cache-miss repair path after the lock holder exits.
+                if not repaired and (len(s.messages) == 0
+                        and s.pending_user_message
+                        and s.active_stream_id
+                        and s.active_stream_id not in _active_stream_ids()):
+                    with LOCK:
+                        if SESSIONS.get(sid) is s:
+                            SESSIONS.pop(sid, None)
             except Exception:
                 pass  # repair is best-effort
         return s
