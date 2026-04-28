@@ -1144,7 +1144,7 @@ def handle_get(handler, parsed) -> bool:
             )
         raw = _skill_view(name)
         data = json.loads(raw) if isinstance(raw, str) else raw
-        if "linked_files" not in data:
+        if not isinstance(data.get("linked_files"), dict):
             data["linked_files"] = {}
         return j(handler, data)
 
@@ -1553,6 +1553,11 @@ def handle_post(handler, parsed) -> bool:
             # process_wide=False: don't mutate the process-global _active_profile.
             # Per-client profile is managed via cookie + thread-local (#798).
             result = switch_profile(name, process_wide=False)
+            # Invalidate the models cache so the very next /api/models request
+            # rebuilds from the new profile's config.yaml rather than returning
+            # the old profile's cached model list (#1200 — profile-switch model bug).
+            from api.config import invalidate_models_cache
+            invalidate_models_cache()
             return j(handler, result, extra_headers={
                 'Set-Cookie': build_profile_cookie(name),
             })
@@ -2881,9 +2886,12 @@ def _handle_chat_sync(handler, body):
     msg = str(body.get("message", "")).strip()
     if not msg:
         return j(handler, {"error": "empty message"}, status=400)
-    workspace = Path(body.get("workspace") or s.workspace).expanduser().resolve()
+    try:
+        workspace = str(resolve_trusted_workspace(body.get("workspace") or s.workspace))
+    except ValueError as e:
+        return bad(handler, str(e))
     with _get_session_agent_lock(s.session_id):
-        s.workspace = str(workspace)
+        s.workspace = workspace
         s.model = body.get("model") or s.model
     from api.streaming import _ENV_LOCK
 
