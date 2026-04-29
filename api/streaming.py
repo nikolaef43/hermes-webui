@@ -74,6 +74,39 @@ def _attachment_name(att) -> str:
     return str(att or '').strip()
 
 
+_IMAGE_MAGIC: dict[bytes | None, frozenset[str]] = {
+    b'\x89PNG\r\n\x1a\n': frozenset({'image/png'}),
+    b'\xff\xd8\xff': frozenset({'image/jpeg'}),
+    b'GIF87a': frozenset({'image/gif'}),
+    b'GIF89a': frozenset({'image/gif'}),
+    b'RIFF': frozenset({'image/webp'}),
+    b'BM': frozenset({'image/bmp'}),
+    None: frozenset({'image/svg+xml'}),
+}
+
+
+def _is_valid_image(path: Path, mime: str) -> bool:
+    """Check that the file's first bytes match the expected image MIME type.
+
+    Uses simple magic-number detection (no external dependency). SVG is
+    allowed through because it is text-based and has no binary signature.
+    """
+    if not mime.startswith('image/'):
+        return False
+    mime_base = mime.split(';', 1)[0]
+    if mime_base == 'image/svg+xml':
+        return True
+    try:
+        with path.open('rb') as fh:
+            head = fh.read(16)
+    except OSError:
+        return False
+    for magic, mimes in _IMAGE_MAGIC.items():
+        if magic is not None and head.startswith(magic) and mime_base in mimes:
+            return True
+    return False
+
+
 def _build_native_multimodal_message(workspace_ctx: str, msg_text: str, attachments, workspace: str):
     """Build native multimodal content parts for current-turn image uploads.
 
@@ -106,7 +139,7 @@ def _build_native_multimodal_message(workspace_ctx: str, msg_text: str, attachme
             if size <= 0 or size > _NATIVE_IMAGE_MAX_BYTES:
                 continue
             mime = str(att.get('mime') or '').strip() or (mimetypes.guess_type(path.name)[0] or '')
-            if not mime.startswith('image/'):
+            if not mime.startswith('image/') or not _is_valid_image(path, mime):
                 continue
             data = base64.b64encode(path.read_bytes()).decode('ascii')
         except Exception:
