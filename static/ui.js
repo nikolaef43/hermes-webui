@@ -2629,7 +2629,8 @@ function renderMessages(){
     if(m.attachments&&m.attachments.length){
       const _attachSid=(S.session&&S.session.session_id)||'';
       filesHtml=`<div class="msg-files">${m.attachments.map(f=>{
-        const fname=f.split('/').pop()||f;
+        const fLabel=typeof f==='string'?f:(f&&(f.name||f.filename||f.path))||'';
+        const fname=String(fLabel).split('/').pop()||String(fLabel);
         if(_IMAGE_EXTS.test(fname)){
           // Use api/file/raw which resolves filename relative to the session workspace.
           // api/media expects a full absolute path which we don't store on the client side.
@@ -3916,7 +3917,7 @@ async function uploadPendingFiles(){
         names.push({name: data.dest, path: data.dest, extracted: data.extracted});
         if(typeof loadDir==='function')loadDir(S.currentDir||'.');
       }else{
-        names.push({name: data.filename, path: data.path});
+        names.push({name: data.filename, path: data.path, mime: data.mime, size: data.size, is_image: !!data.is_image});
       }
     }catch(e){failures++;setStatus(`\u274c ${t('upload_failed')}${f.name} \u2014 ${e.message}`);}
     bar.style.width=`${Math.round((i+1)/total*100)}%`;
