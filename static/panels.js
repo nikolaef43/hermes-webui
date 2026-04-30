@@ -2748,9 +2748,22 @@ async function _autosavePreferencesSettings(payload){
     await api('/api/settings',{method:'POST',body:JSON.stringify(payload)});
     _settingsPreferencesAutosaveRetryPayload=null;
     _setPreferencesAutosaveStatus('saved');
-    _settingsDirty=false;
-    const bar=$('settingsUnsavedBar');
-    if(bar) bar.style.display='none';
+    // Only clear the global dirty flag and hide the unsaved-changes bar when
+    // there is no pending edit on a manually-saved field. Password and model
+    // are still committed via the explicit "Save Settings" button (password
+    // for security; model goes through /api/default-model). Without this
+    // guard, autosaving a checkbox right after a user typed in the password
+    // field would silently dismiss the password edit. (Opus pre-release
+    // review of v0.50.250, SHOULD-FIX Q1.)
+    const pwField=$('settingsPassword');
+    const pwDirty=!!(pwField&&pwField.value);
+    const modelSel=$('settingsModel');
+    const modelDirty=!!(modelSel&&((modelSel.value||'')!==(_settingsHermesDefaultModelOnOpen||'')));
+    if(!pwDirty&&!modelDirty){
+      _settingsDirty=false;
+      const bar=$('settingsUnsavedBar');
+      if(bar) bar.style.display='none';
+    }
   }catch(e){
     console.warn('[settings] preferences autosave failed', e);
     _setPreferencesAutosaveStatus('failed');

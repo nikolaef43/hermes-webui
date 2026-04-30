@@ -105,12 +105,29 @@ def test_password_still_uses_mark_dirty():
 
 def test_autosave_clears_dirty_flag_and_hides_unsaved_bar():
     """_autosavePreferencesSettings must clear the dirty flag and hide the
-    unsaved-changes bar on success — otherwise the bar shows stale state."""
+    unsaved-changes bar on success — but ONLY when password and model are
+    not pending. Q1 from Opus pre-release review of v0.50.250."""
     block = _function_block(PANELS_JS, "_autosavePreferencesSettings")
-    assert "_settingsDirty=false" in block.replace(" ", ""), \
-        "_autosavePreferencesSettings must set _settingsDirty=false on success"
-    assert "settingsUnsavedBar" in block, \
-        "_autosavePreferencesSettings must hide settingsUnsavedBar on success"
+    # Must check pwField/modelSel state before clearing dirty + hiding bar
+    assert "settingsPassword" in block, (
+        "_autosavePreferencesSettings must check the password field before "
+        "clearing _settingsDirty (Opus SHOULD-FIX Q1: autosave was clobbering "
+        "pending password edits)"
+    )
+    assert "settingsModel" in block, (
+        "_autosavePreferencesSettings must check the model selector before "
+        "clearing _settingsDirty (autosave was clobbering pending model changes)"
+    )
+    assert "_settingsHermesDefaultModelOnOpen" in block, (
+        "_autosavePreferencesSettings must compare the model selector value "
+        "against the on-open snapshot to detect a pending change"
+    )
+    # The clear-and-hide block must be conditional, not unconditional
+    compact = block.replace(" ", "").replace("\n", "")
+    assert "if(!pwDirty&&!modelDirty)" in compact or "if(pwDirty||modelDirty)" in compact, (
+        "_autosavePreferencesSettings must guard the dirty-clear and bar-hide "
+        "with a condition that defers when a manual field has pending edits"
+    )
 
 
 def test_status_div_exists_in_index_html():
