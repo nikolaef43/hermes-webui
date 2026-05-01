@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Local model setup no longer fails mid-conversation with `LOCAL_API_KEY` error** — when `model.base_url` pointed at an OpenAI-compatible loopback endpoint that didn't match the `ollama`/`localhost`/`lmstudio` keyword classifier (e.g. `http://192.168.1.10:8080/v1`, llama.cpp on `127.0.0.1:8080`, vLLM, TabbyAPI, custom proxies), `_build_available_models_uncached` auto-detected the provider as `"local"` and persisted that into `config.yaml`. Inference worked initially because the main agent has its own direct path that uses the explicit `base_url + api_key`. But once the conversation grew enough to trip auto-compression — or when vision / web extraction / skills-hub fired — the agent's auxiliary client routed through `resolve_provider_client("local", …)`, fell through every branch, and raised `Provider 'local' is set in config.yaml but no API key was found. Set the LOCAL_API_KEY environment variable, or switch to a different provider with hermes model.` Three-layer fix: (1) the auto-detect block now writes `provider: "custom"` instead of `provider: "local"` for unknown loopback hosts — `custom` is the canonical OpenAI-compat fall-through and the agent's auxiliary client takes the `no-key-required` path for it; (2) `resolve_model_provider()` rewrites legacy `"local"` to `"custom"` at read time so existing broken configs heal automatically without requiring the user to edit `config.yaml` by hand; (3) `set_hermes_default_model()` refuses to persist `"local"` going forward, and `_PROVIDER_ALIASES` gets a `"local" → "custom"` entry for any consumer that normalises through the alias table. 9 regression tests in `test_issue1384_local_provider.py` covering the source-code invariant, both YAML cases, the migration path, and the alias table. (`api/config.py`, `tests/test_issue1384_local_provider.py`) Closes #1384
+
 ## [v0.50.252] — 2026-05-01
 
 ### Fixed
@@ -17,7 +20,6 @@
 ### Changed
 - **API credential redaction now uses `force=True`** — `_combined_redact` (introduced by #1379) now passes `force=True` to `redact_sensitive_text` so the agent's broader patterns (Stripe `sk_live_`, Google `AIza…`, JWT `eyJ…`, DB connection strings, Telegram bot tokens) run regardless of the user's `HERMES_REDACT_SECRETS` opt-in. The local fallback then handles the short-prefix shapes the agent omits (`ghp_`, `sk-`, `hf_`, `AKIA`). WebUI API responses are a hard safety boundary — no opt-in should be required. (`api/helpers.py`) — Opus pre-release follow-up
 - **`_active_profile_for_live_models_cache` logs the fallback path** — when `get_active_profile_name()` raises (transient state, mid-switch, etc.) the live-models cache (#1378) falls back to `"default"`, mis-scoping the cache for up to 60s. Now logs at debug so we can detect this in production logs without changing the blast radius (TTL still caps the bad-cache window). (`api/routes.py`) — Opus pre-release follow-up
-
 ## [v0.50.251] — 2026-04-30
 
 ### Fixed
