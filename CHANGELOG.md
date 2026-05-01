@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [v0.50.258] — 2026-05-01
+
+### Fixed
+- **Login stability: 30-day session TTL, redirect-back, connectivity probe** — three independent fixes for users on flaky networks (VPN, Tailscale). (1) `SESSION_TTL` extended from 24 hours to 30 days in `api/auth.py` so users no longer get kicked out daily. (2) When a session expires and the user is redirected to `/login`, the server now passes `?next=<original-path>` so `_safeNextPath()` in `static/login.js` redirects them back after a successful login instead of dumping them on the login screen. (3) Login page now probes `/health` on load (a public endpoint) and distinguishes "session expired / wrong password" from "can't reach server" — when the server is unreachable, shows a clear "Cannot reach server — check your VPN / Tailscale connection." message, disables the form, retries every 3 seconds, and auto-reloads the page once the server becomes reachable again. (`api/auth.py`, `static/login.js`) @bsgdigital — PR #1419
+
+### Changed (Opus pre-release advisor)
+- **Login redirect URL encoding fix — multi-param queries no longer truncated** — the original PR #1419 implementation built the outer `?next=` parameter via `quote(path, safe='/:@!$&\'()*+,;=')` which kept `?` and `&` literal. Two problems: (a) paths with multi-param queries (e.g. `/api/sessions?limit=50&offset=0`) round-tripped as `/api/sessions?limit=50` because the inner `&` terminated the outer `next` value, (b) attacker-controlled paths with embedded `&next=...` injected a second top-level `next` parameter (browsers parse first-match, Python parse_qs parses last-match — parser-divergence footgun even though `_safeNextPath()` rejects the actual exploit). Fix encodes the entire `path?query` blob with `safe='/'` so `?`, `&`, `=` all percent-encode. The outer `next` then holds exactly one path-with-query string. 6 regression tests in `test_v050258_opus_followups.py` pin the round-trip behavior across simple paths, single-query paths, multi-param queries, and attacker-injection neutralization. (`api/auth.py`, `tests/test_v050258_opus_followups.py`)
+
+
 ## [v0.50.257] — 2026-05-01
 
 ### Added
