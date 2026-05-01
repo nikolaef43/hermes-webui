@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [v0.50.256] — 2026-05-01
+
+### Fixed
+- **TTS speaker icon and four other Lucide icons rendered invisibly** (#1413, closes #1413) — `static/icons.js::LI_PATHS` was missing five icon names that `static/*.js` calls `li('NAME', ...)` with. The `li()` helper logs `console.warn('li(): unknown icon NAME')` and returns an empty string when the name isn't registered, so the host element renders with `display:flex` and a click handler but no glyph. Five missing entries added: (1) `volume-2` — TTS speaker button on every assistant message (`ui.js:3376`); regression from #499, surfaced after #1411 (v0.50.255) fixed the CSS specificity collision and made the empty button visible-but-empty. Reported by @AvidFuturist via Telegram. (2) `chevron-up` — queue pill chevron (`ui.js:2178`); had a `▲` ASCII fallback but only when `li` itself was undefined, not when it returned `''`. (3) `hash`, (4) `cpu`, (5) `dollar-sign` — Insights panel stat cards (`panels.js:883-885`); fresh regression from #1405 (v0.50.255). New regression test `test_issue1413_li_path_coverage.py` walks every `li('NAME', ...)` call across `static/*.js` and asserts each `NAME` is registered in `LI_PATHS` — guards the entire class of bug, not just the five fixed here. (`static/icons.js`, `tests/test_issue1413_li_path_coverage.py`) — fixes #1413, reported by @AvidFuturist via Telegram
+
 ## [v0.50.255] — 2026-05-01
 
 ### Added
