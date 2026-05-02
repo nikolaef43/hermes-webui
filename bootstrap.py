@@ -208,7 +208,81 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Fail instead of attempting the official Hermes installer.",
     )
+    parser.add_argument(
+        "--foreground",
+        action="store_true",
+        help=(
+            "Run server.py in this process (via os.execv) instead of spawning a "
+            "child. Use this under launchd / systemd / supervisord so the "
+            "supervisor sees the long-lived server as the original child. "
+            "Implies --no-browser. Skips the post-launch health probe — the "
+            "supervisor's own KeepAlive / Restart=on-failure handles liveness."
+        ),
+    )
     return parser.parse_args()
+
+
+# Env vars whose presence indicates this process was launched by a supervisor
+# that wants to manage the server's lifecycle (KeepAlive, Restart=always, etc.).
+# When any is set, we auto-promote to --foreground so we don't double-fork.
+#
+# - INVOCATION_ID            systemd (set on every service activation)
+# - JOURNAL_STREAM           systemd (set when stdio is wired to the journal)
+# - NOTIFY_SOCKET            systemd Type=notify, s6 sd_notify-style
+# - XPC_SERVICE_NAME         launchd (set to the Label of the running plist)
+# - SUPERVISOR_ENABLED       supervisord
+# - HERMES_WEBUI_FOREGROUND  explicit user opt-in (=1 / true / yes / on)
+#
+# Note on XPC_SERVICE_NAME: macOS launchd sets this in EVERY Terminal-launched
+# shell too — typical values include "0" (truthy in Python!) and
+# "application.com.apple.Terminal.<UUID>". A bare existence check would
+# false-positive on every Mac dev machine running ./start.sh interactively.
+# We narrow to launchd Label-style names (com.<reverse-dns>.<svc>) — those
+# are real services. Verified with `launchctl getenv XPC_SERVICE_NAME` and
+# Apple's documented launchd behavior.
+_SUPERVISOR_ENV_VARS = (
+    "INVOCATION_ID",
+    "JOURNAL_STREAM",
+    "NOTIFY_SOCKET",
+    "XPC_SERVICE_NAME",
+    "SUPERVISOR_ENABLED",
+)
+
+
+def _is_real_supervisor_value(name: str, value: str) -> bool:
+    """Filter out known-noise env-var values that aren't actual supervisors.
+
+    Most env vars in _SUPERVISOR_ENV_VARS are only set by the supervisor we
+    care about, so any non-empty value is meaningful. XPC_SERVICE_NAME is the
+    exception: macOS launchd sets it in every Terminal-spawned shell with
+    values like "0" or "application.com.apple.Terminal.<UUID>". A real
+    launchd-managed service has a reverse-DNS Label like "com.example.foo".
+    """
+    if not value:
+        return False
+    if name == "XPC_SERVICE_NAME":
+        # Reject Apple's noise values; accept Label-style names.
+        if value == "0":
+            return False
+        if value.startswith("application."):
+            return False
+    return True
+
+
+def _detect_supervisor() -> str | None:
+    """Return the name of the detected supervisor env var, or None.
+
+    Pure inspection of os.environ — no side effects. Returned name is the env
+    var that triggered detection, useful for log messages and for tests.
+    """
+    explicit = os.environ.get("HERMES_WEBUI_FOREGROUND", "").strip().lower()
+    if explicit in ("1", "true", "yes", "on"):
+        return "HERMES_WEBUI_FOREGROUND"
+    for name in _SUPERVISOR_ENV_VARS:
+        value = os.environ.get(name, "")
+        if _is_real_supervisor_value(name, value):
+            return name
+    return None
 
 
 def main() -> int:
@@ -229,21 +303,59 @@ def main() -> int:
         os.getenv("HERMES_WEBUI_STATE_DIR", str(Path.home() / ".hermes" / "webui"))
     ).expanduser()
     state_dir.mkdir(parents=True, exist_ok=True)
-    log_path = state_dir / f"bootstrap-{args.port}.log"
 
-    env = os.environ.copy()
-    env["HERMES_WEBUI_HOST"] = args.host
-    env["HERMES_WEBUI_PORT"] = str(args.port)
-    env.setdefault("HERMES_WEBUI_STATE_DIR", str(state_dir))
+    # Mutate os.environ so child (or post-execv) inherits the resolved values.
+    os.environ["HERMES_WEBUI_HOST"] = args.host
+    os.environ["HERMES_WEBUI_PORT"] = str(args.port)
+    os.environ.setdefault("HERMES_WEBUI_STATE_DIR", str(state_dir))
     if agent_dir:
-        env["HERMES_WEBUI_AGENT_DIR"] = str(agent_dir)
+        os.environ["HERMES_WEBUI_AGENT_DIR"] = str(agent_dir)
+
+    server_cwd = str(agent_dir or REPO_ROOT)
+    server_path = str(REPO_ROOT / "server.py")
+
+    # --foreground (or auto-detected supervisor): replace this process with the
+    # server. The supervisor sees the long-lived server as the original child,
+    # so KeepAlive / Restart=always / autorestart=true work correctly. No
+    # health probe — the supervisor's own restart-on-exit handles liveness.
+    foreground_reason = "--foreground" if args.foreground else _detect_supervisor()
+    if foreground_reason:
+        info(
+            f"Starting Hermes Web UI on http://{args.host}:{args.port} "
+            f"(foreground mode: {foreground_reason})"
+        )
+        try:
+            os.chdir(server_cwd)
+        except OSError as exc:
+            raise RuntimeError(
+                f"Could not chdir to {server_cwd!r} before exec: {exc}"
+            ) from exc
+        # Defensive check: if python_exe is missing or non-executable, execv
+        # raises OSError, the wrapper catches and SystemExit(1)s, and the
+        # supervisor restarts — looping forever, exactly the failure mode this
+        # PR is meant to eliminate. Convert to a single visible error.
+        if not os.access(python_exe, os.X_OK):
+            raise RuntimeError(
+                f"Python interpreter at {python_exe!r} is not executable. "
+                f"Set HERMES_WEBUI_PYTHON to a working interpreter or fix "
+                f"the agent venv at {agent_dir}."
+            )
+        # os.execv replaces the current process image. Anything after this line
+        # only runs if execv itself fails (it raises OSError on failure).
+        os.execv(python_exe, [python_exe, server_path])
+        # Unreachable — execv either replaces the process or raises.
+        raise RuntimeError("os.execv returned unexpectedly")
+
+    # Default (legacy) path: spawn the server as a detached child, probe
+    # /health, then return. Suitable for an interactive `bash start.sh` run.
+    log_path = state_dir / f"bootstrap-{args.port}.log"
 
     info(f"Starting Hermes Web UI on http://{args.host}:{args.port}")
     with log_path.open("ab") as log_file:
         proc = subprocess.Popen(
-            [python_exe, str(REPO_ROOT / "server.py")],
-            cwd=str(agent_dir or REPO_ROOT),
-            env=env,
+            [python_exe, server_path],
+            cwd=server_cwd,
+            env=os.environ.copy(),
             stdout=log_file,
             stderr=subprocess.STDOUT,
             start_new_session=True,
