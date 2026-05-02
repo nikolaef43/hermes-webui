@@ -1357,7 +1357,7 @@ function applyBotName(){
 // sync whenever the page is restored from cache (`event.persisted === true`).
 // Fix #1045: also re-run topbar/workspace/panel state so the rail and layout
 // chrome aren't left in the stale bfcache snapshot.
-window.addEventListener('pageshow', (event) => {
+window.addEventListener('pageshow', async (event) => {
   if (!event.persisted) return;  // fresh loads are handled by the IIFE above
   const _srch = document.getElementById('sessionSearch');
   if (_srch) _srch.value = '';
@@ -1367,6 +1367,17 @@ window.addEventListener('pageshow', (event) => {
   if (typeof closeReasoningDropdown === 'function') try { closeReasoningDropdown(); } catch (_) {}
   if (typeof closeWsDropdown === 'function') try { closeWsDropdown(); } catch (_) {}
   if (typeof closeProfileDropdown === 'function') try { closeProfileDropdown(); } catch (_) {}
+  // BFCache restores the frozen DOM without rerunning boot. Refresh the active
+  // session through the normal load path so in-flight sessions with
+  // active_stream_id / pending_user_message can reattach like a reload restore.
+  if (S.session && S.session.session_id && typeof loadSession === 'function') {
+    try {
+      await loadSession(S.session.session_id);
+      if (S.session && S.session.session_id && typeof checkInflightOnBoot === 'function') {
+        try { await checkInflightOnBoot(S.session.session_id); } catch (_) {}
+      }
+    } catch (_) {}
+  }
   // Re-synchronise layout chrome that the boot IIFE sets up but bfcache
   // doesn't re-run. Each call is guarded so missing helpers degrade silently.
   if (typeof syncTopbar === 'function') try { syncTopbar(); } catch (_) {}
