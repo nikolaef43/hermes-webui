@@ -811,10 +811,13 @@ $('msg').addEventListener('input',()=>{
 // Track IME composition for East Asian input. Safari fires the committing
 // keydown AFTER compositionend with isComposing=false, so we also keep a
 // manual flag and reset it on the next tick to swallow that trailing Enter.
+// Also reset on blur so the flag can never get stuck in a true state if
+// compositionend never fires (focus loss with some IME implementations).
 let _imeComposing=false;
 (()=>{const _c=$('msg');if(!_c)return;
   _c.addEventListener('compositionstart',()=>{_imeComposing=true;});
   _c.addEventListener('compositionend',()=>{setTimeout(()=>{_imeComposing=false;},0);});
+  _c.addEventListener('blur',()=>{_imeComposing=false;});
 })();
 function _isImeEnter(e){return e.isComposing||e.keyCode===229||_imeComposing;}
 $('msg').addEventListener('keydown',e=>{

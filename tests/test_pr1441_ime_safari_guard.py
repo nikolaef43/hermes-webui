@@ -64,6 +64,25 @@ def test_compositionend_resets_flag_on_next_tick():
     )
 
 
+def test_blur_resets_imecomposing_flag():
+    """The blur listener must also reset _imeComposing so the flag cannot get
+    stuck at true if compositionend never fires (focus loss / window blur
+    with some IME implementations). Without this, a single missed
+    compositionend would brick Enter-to-send until the page is reloaded.
+
+    Added in v0.50.264 stage review per Opus advisor recommendation.
+    """
+    pattern = re.compile(
+        r"['\"]blur['\"]\s*,\s*(?:\(\s*\)|function\s*\(\s*\))\s*=>?\s*\{?\s*"
+        r"_imeComposing\s*=\s*false",
+        re.DOTALL,
+    )
+    assert pattern.search(BOOT_JS), (
+        "blur listener must reset _imeComposing = false to recover from "
+        "missed compositionend (Opus follow-up to PR #1441)"
+    )
+
+
 def test_ime_listeners_null_guard_msg_lookup():
     """The IIFE that registers composition listeners must null-guard $('msg') so
     boot.js does not throw on pages that don't have a #msg textarea (e.g. login,
