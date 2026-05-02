@@ -1,5 +1,21 @@
 # Hermes Web UI -- Changelog
 
+## [v0.50.267] — 2026-05-02
+
+### Fixed (contributor PR batch — 7 PRs)
+
+- **`_norm_model_id` strips multi-segment provider prefixes** (#1454, by @happy5318) — `s.split(':', 1)[1]` only stripped the first colon-separated segment, leaving `jingdong:GLM-5` un-normalized for `@custom:jingdong:GLM-5`-style IDs. Now uses `s.split(':')[-1]` (with a trailing-empty fallback to preserve distinct ids on malformed input). Same fix applied to the `/` branch. (`api/config.py`)
+- **Frontend `_normalizeConfiguredModelKey` matches backend** (#1474, by @happy5318) — the JavaScript helper had the same one-segment-only bug as the Python helper. Mirror fix + trailing-empty fallback. Plus surface the configured-model provider name in the model dropdown badge (e.g. "Primary (jingdong)"). (`static/ui.js`)
+- **`pushState` instead of `replaceState` for chat navigation** (#1461, by @JKJameson) — switching between chats wrote to the same browser-history entry, so the back button could not return to a prior chat. Now each chat-switch creates a new history entry. One-line change. (`static/sessions.js`)
+- **Session rename: ondblclick handler + loading guard** (#1465, by @AlexeyDsov) — adds a native `ondblclick` handler as a fallback to the existing manual click-counter (which can miss double-taps when the click-delay racing setTimeout fires between pointerups), plus a guard preventing rename while the session is still loading. (`static/sessions.js`)
+- **Reuse in-flight session stream on switch-back** (#1467, by @dso2ng) — `attachLiveStream()` now reuses the existing EventSource transport when (sessionId, streamId) match and the browser hasn't marked it CLOSED, instead of always tearing down and reopening. The server-side stream queue is not a replay log, so the close-and-reopen window dropped events that landed during the gap. 4 regression tests pin the invariants. (`static/messages.js`, `tests/test_inflight_stream_reuse.py`)
+- **Handle 401 redirect gracefully in loadSession flow** (#1460, by @joaompfp) — when `api()` redirects to `/login` after the auth session expires (e.g. server restart), it returns `undefined`. Five callsites in `loadSession` / `_ensureMessagesLoaded` / `_loadOlderMessages` / `_ensureAllMessagesLoaded` / `_positionModelDropdown` now defensively check for undefined data and bail without state mutation. (`static/sessions.js`, `static/ui.js`)
+- **Batch session actions + in-flight reload recovery** (#1473, by @Thanatos-Z) — fixed three regressions: (1) batch action bar rendered as an empty/global bottom bar with literal `{0}` placeholders because i18n placeholder substitution only ran for arrow-function values — `t()` now substitutes `{N}` placeholders at runtime for non-function values when args are passed; (2) batch project-picker dropped onto `document.body` orphaned itself on list re-render — now scoped to the action bar; (3) sessions with `active_stream_id` or `pending_user_message` set but `message_count=0` (mid-restore from in-flight reload) were filtered out of the sidebar — filter widened. 6 regression tests. (`static/boot.js`, `static/i18n.js`, `static/sessions.js`, `static/style.css`, `tests/test_session_batch_select.py`)
+
+### Defensive hardening (Opus pre-release follow-up)
+
+- **`_norm_model_id` trailing-empty fallback** — Opus advisor flagged a `SHOULD-FIX` edge case in #1454/#1474: malformed configured-model IDs ending in a colon or slash (`@custom:foo:bar:` or `provider/model/`) would `split('...')[-1]` to an empty string, collapsing distinct IDs to the same key in the configured-model badge filter. Both backend (`api/config.py:1513`) and frontend (`static/ui.js:524`) helpers now fall back to the original input when the last segment is empty (`parts[-1] or s` / `last || s`). 5 regression tests pin the guard, the clean multi-segment fix, and the frontend mirror. (`api/config.py`, `static/ui.js`, `tests/test_norm_model_id_trailing_empty_guard.py`)
+
 ## [v0.50.266] — 2026-05-02
 
 ### Fixed (i18n parity)

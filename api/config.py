@@ -1506,13 +1506,17 @@ def get_available_models() -> dict:
 
         def _norm_model_id(model_id: str) -> str:
             s = str(model_id or "").strip().lower()
-            # Strip @provider: prefix (e.g., @custom:jingdong:GLM-5 -> GLM-5)
+            # Strip @provider: prefix (e.g., @custom:jingdong:GLM-5 -> GLM-5).
+            # Defensive: if the last segment is empty (trailing colon, malformed
+            # config), keep the original to avoid collapsing distinct IDs to ''.
             if s.startswith("@") and ":" in s:
-                # Split on all colons and take the last part
-                s = s.split(":")[-1]
-            # Strip provider/model prefix (e.g., custom:jingdong/GLM-5 -> GLM-5)
+                parts = s.split(":")
+                s = parts[-1] or s
+            # Strip provider/model prefix (e.g., custom:jingdong/GLM-5 -> GLM-5).
+            # Same trailing-empty guard.
             if "/" in s:
-                s = s.split("/")[-1]
+                parts = s.split("/")
+                s = parts[-1] or s
             return s.replace("-", ".")
 
         def _build_configured_model_badges() -> dict[str, dict[str, str]]:

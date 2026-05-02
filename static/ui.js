@@ -520,9 +520,11 @@ function _selectedModelOption(){
 
 function _normalizeConfiguredModelKey(modelId){
   let s=String(modelId||'').trim().toLowerCase();
-  // Strip @provider: prefix (e.g., @custom:jingdong:GLM-5 -> GLM-5)
-  if(s.startsWith('@')&&s.includes(':')) s=s.split(':').pop();
-  if(s.includes('/')) s=s.split('/').pop();
+  // Strip @provider: prefix (e.g., @custom:jingdong:GLM-5 -> GLM-5).
+  // Defensive: trailing-colon / trailing-slash falls back to the original key
+  // so malformed configs don't collapse distinct ids to '' (matches backend _norm_model_id).
+  if(s.startsWith('@')&&s.includes(':')){const last=s.split(':').pop();s=last||s;}
+  if(s.includes('/')){const last=s.split('/').pop();s=last||s;}
   return s.replace(/-/g,'.');
 }
 
