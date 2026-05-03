@@ -860,6 +860,35 @@ def _format_ollama_label(mid: str) -> str:
     return label
 
 
+def _format_nous_label(mid: str) -> str:
+    """Turn a Nous Portal model id into a readable display label.
+
+    Nous IDs are ``<vendor>/<model>[:<variant>]`` (e.g. ``anthropic/claude-opus-4.7``);
+    drop the vendor namespace, prettify the model name with the same token
+    rules as :func:`_format_ollama_label` (short acronyms uppercase, size
+    suffixes uppercase, capitalize the rest), then append ``" (via Nous)"``
+    so the entry is visually distinct from same-named models in other
+    provider groups (e.g. direct Anthropic).
+
+    Examples::
+
+        anthropic/claude-opus-4.7         -> Claude Opus 4.7 (via Nous)
+        openai/gpt-5.4-mini               -> GPT 5.4 Mini (via Nous)
+        google/gemini-3.1-pro-preview     -> Gemini 3.1 Pro Preview (via Nous)
+        moonshotai/kimi-k2.6              -> Kimi K2.6 (via Nous)
+        qwen/qwen3.5-plus-02-15           -> Qwen3.5 Plus 02 15 (via Nous)
+        nvidia/nemotron-3-super-120b-a12b -> Nemotron 3 Super 120B A12B (via Nous)
+        minimax/minimax-m2.5:free         -> MiniMax M2.5 (Free) (via Nous)
+    """
+    name_part = mid.split("/", 1)[-1] if "/" in mid else mid
+    # MiniMax-CN ids come back lowercase on the live wire (`minimax-m2.5`) but
+    # the curated label convention is mixed-case "MiniMax M2.5" — match that.
+    if name_part.lower().startswith("minimax"):
+        name_part = "MiniMax" + name_part[len("minimax"):]
+    base = _format_ollama_label(name_part)
+    return f"{base} (via Nous)"
+
+
 def _apply_provider_prefix(
     raw_models: list[dict],
     provider_id: str,
@@ -2099,6 +2128,44 @@ def get_available_models() -> dict:
                         ]
                     except Exception:
                         logger.warning("Failed to load Ollama Cloud models from hermes_cli")
+
+                    if raw_models:
+                        models = _apply_provider_prefix(raw_models, pid, active_provider)
+                        groups.append(
+                            {
+                                "provider": provider_name,
+                                "provider_id": pid,
+                                "models": models,
+                            }
+                        )
+                elif pid == "nous":
+                    # Nous Portal exposes a curated catalog (~30 models, currently)
+                    # via inference-api.nousresearch.com. Like ollama-cloud, we
+                    # live-fetch through hermes_cli.models.provider_model_ids()
+                    # rather than relying on the static four-entry list, which
+                    # chronically drifts out of date (#1538). Fall back to the
+                    # static list when hermes_cli is unavailable (test envs,
+                    # package mismatches) so the picker is never empty.
+                    raw_models = []
+                    try:
+                        from hermes_cli.models import provider_model_ids as _provider_model_ids
+
+                        live_ids = _provider_model_ids("nous") or []
+                        raw_models = [
+                            # Prefix every live id with "@nous:" so routing matches
+                            # the explicit-provider-hint branch of resolve_model_provider
+                            # (same convention as the curated static list — see
+                            # tests/test_nous_portal_routing.py for the invariant).
+                            {"id": f"@nous:{mid}", "label": _format_nous_label(mid)}
+                            for mid in live_ids
+                        ]
+                    except Exception:
+                        logger.warning("Failed to load Nous Portal models from hermes_cli")
+
+                    if not raw_models:
+                        # Static fallback: deepcopy so dedup/prefix mutation
+                        # below does not bleed into the module-level catalog.
+                        raw_models = copy.deepcopy(_PROVIDER_MODELS.get("nous", []))
 
                     if raw_models:
                         models = _apply_provider_prefix(raw_models, pid, active_provider)

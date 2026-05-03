@@ -391,7 +391,26 @@ def get_providers() -> dict[str, Any]:
                 except Exception:
                     pass
 
-        models = _PROVIDER_MODELS.get(pid, [])
+        models = list(_PROVIDER_MODELS.get(pid, []))
+        # Nous Portal: prefer the live catalog so the providers card matches
+        # the dropdown picker (#1538). Same fallback shape as the static-only
+        # case below — when hermes_cli is unavailable or its lookup raises,
+        # we keep the four-entry curated list.
+        if pid == "nous":
+            try:
+                from hermes_cli.models import provider_model_ids as _provider_model_ids
+
+                live_ids = _provider_model_ids("nous") or []
+                if live_ids:
+                    # Lazy-import to avoid circular dep with api.config.
+                    from api.config import _format_nous_label
+
+                    models = [
+                        {"id": f"@nous:{mid}", "label": _format_nous_label(mid)}
+                        for mid in live_ids
+                    ]
+            except Exception:
+                logger.debug("Failed to load Nous Portal models from hermes_cli")
         # Also include models from config.yaml providers section
         if isinstance(providers_cfg, dict):
             provider_cfg = providers_cfg.get(pid, {})

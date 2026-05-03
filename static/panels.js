@@ -3364,6 +3364,11 @@ async function _saveProviderKey(providerId){
     if(res.ok){
       showToast(res.provider+' key '+res.action);
       els.input.value='';
+      // Invalidate every dropdown surface that caches /api/models so the
+      // newly-configured provider's models show up without a server restart
+      // or page reload (#1539). Server-side invalidate_models_cache() is
+      // already called by api/providers.py:set_provider_key.
+      _refreshModelDropdownsAfterProviderChange();
       await loadProvidersPanel(); // refresh list
     }else{
       showToast(res.error||'Failed to save key');
@@ -3385,6 +3390,12 @@ async function _removeProviderKey(providerId){
     const res=await api('/api/providers/delete',{method:'POST',body:JSON.stringify({provider:providerId})});
     if(res.ok){
       showToast(res.provider+' key '+t('providers_key_removed').toLowerCase());
+      // Drop the removed provider from every cached dropdown surface so it
+      // disappears immediately — composer picker, /model slash command,
+      // Settings → Default Model, configured-model badges (#1539).
+      // Without this, a stale list from before the delete keeps offering
+      // the now-removed provider's models until the page is reloaded.
+      _refreshModelDropdownsAfterProviderChange();
       await loadProvidersPanel(); // refresh list
     }else{
       showToast(res.error||'Failed to remove key');
@@ -3393,6 +3404,28 @@ async function _removeProviderKey(providerId){
   }catch(e){
     showToast('Error: '+e.message);
     if(els.saveBtn){els.saveBtn.disabled=false;els.saveBtn.textContent=t('providers_save');}
+  }
+}
+
+// Shared dropdown-cache flush invoked after a provider add/remove. The
+// server-side TTL cache is already invalidated by /api/providers and
+// /api/providers/delete (via api/providers.py:set_provider_key); this
+// flushes the JS-side caches so the next render rebuilds from a fresh
+// /api/models response. Wrapped in a try/catch so a UI module that hasn't
+// loaded yet (e.g. during early Settings open) cannot break the save flow.
+function _refreshModelDropdownsAfterProviderChange(){
+  try{
+    if(typeof window._invalidateSlashModelCache==='function'){
+      window._invalidateSlashModelCache();
+    }
+    if(typeof populateModelDropdown==='function'){
+      // Fire-and-forget: don't block the providers panel refresh on a
+      // dropdown rebuild. The composer/Settings dropdowns will catch up
+      // on the very next paint frame.
+      Promise.resolve(populateModelDropdown()).catch(()=>{});
+    }
+  }catch(_e){
+    // Swallow — dropdown refresh is best-effort, providers panel must still update.
   }
 }
 
