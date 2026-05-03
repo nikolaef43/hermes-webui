@@ -6313,6 +6313,8 @@ const LOCALES = {
     delete_confirm: (name) => `Excluir ${name}?`,
     deleted: 'Excluído ',
     delete_failed: 'Falha ao excluir: ',
+    reveal_in_finder: 'Mostrar no gerenciador de arquivos',
+    reveal_failed: 'Falha ao mostrar: ',
     new_file_prompt: 'Nome do novo arquivo (ex: notes.md):',
     project_name_prompt: 'Nome do projeto:',
     created: 'Criado ',
