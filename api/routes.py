@@ -1111,6 +1111,13 @@ def _handle_insights(handler, parsed) -> bool:
 def handle_get(handler, parsed) -> bool:
     """Handle all GET routes. Returns True if handled, False for 404."""
 
+    if parsed.path.startswith("/session/static/"):
+        # Strip the leading "/session" so _serve_static() sees a path that
+        # starts with "/static/" (its required prefix). _serve_static enforces
+        # its own path-traversal sandbox via Path.resolve()+relative_to().
+        stripped = parsed._replace(path=parsed.path[len("/session"):])
+        return _serve_static(handler, stripped)
+
     if parsed.path in ("/", "/index.html") or parsed.path.startswith("/session/"):
         from urllib.parse import quote
         from api.updates import WEBUI_VERSION
