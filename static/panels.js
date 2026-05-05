@@ -1619,6 +1619,20 @@ async function loadKanbanBoards(){
   _renderKanbanBoardMenu(boards, active);
 }
 
+// Restrict board.color to CSS hex codes or simple named colors before
+// interpolating into a `style=""` attribute. esc() HTML-escapes but
+// does not block CSS-context injection (`color:red;background:url(...)`
+// would otherwise exfiltrate page state via an attacker-controlled URL,
+// since neither this bridge nor the agent's kanban_db validates color).
+function _kanbanSafeColor(c){
+  if (typeof c !== 'string') return '';
+  const s = c.trim();
+  if (!s) return '';
+  if (/^#[0-9a-fA-F]{3,8}$/.test(s)) return s;
+  if (/^[a-zA-Z]{3,32}$/.test(s)) return s;
+  return '';
+}
+
 function _renderKanbanBoardMenu(boards, current){
   const menu = document.getElementById('kanbanBoardSwitcherMenu');
   if (!menu) return;
@@ -1626,7 +1640,8 @@ function _renderKanbanBoardMenu(boards, current){
     const isCurrent = b.slug === current;
     const total = (b.total != null) ? b.total : (b.counts ? Object.values(b.counts).reduce((a,c)=>a+Number(c||0),0) : 0);
     const icon = b.icon ? esc(b.icon) : '';
-    const colorStyle = b.color ? `color:${esc(b.color)}` : '';
+    const safeColor = _kanbanSafeColor(b.color);
+    const colorStyle = safeColor ? `color:${safeColor}` : '';
     return `<button type="button" class="kanban-board-switcher-item ${isCurrent ? 'is-current' : ''}" role="menuitem" data-board-slug="${esc(b.slug)}" onclick="switchKanbanBoard('${esc(b.slug)}')">
       <span class="kanban-board-switcher-item-icon" style="${colorStyle}">${icon || (isCurrent ? '✓' : '')}</span>
       <span class="kanban-board-switcher-item-name">${esc(b.name || b.slug)}</span>
