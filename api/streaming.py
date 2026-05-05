@@ -1379,16 +1379,22 @@ def _merge_display_messages_after_agent_result(previous_display, previous_contex
     return merged
 
 
-def _tool_result_snippet(raw) -> str:
-    """Extract a compact result preview from a stored tool message payload."""
+_TOOL_RESULT_SNIPPET_MAX = 4000
+
+
+def _tool_result_snippet(raw, limit: int = _TOOL_RESULT_SNIPPET_MAX) -> str:
+    """Extract a bounded result preview from a stored tool message payload."""
+    if limit <= 0:
+        return ''
     text = str(raw or '')
     try:
-        data = json.loads(text)
+        data = raw if isinstance(raw, dict) else json.loads(text)
         if isinstance(data, dict):
-            return str(data.get('output') or data.get('result') or data.get('error') or text)[:200]
+            preview = data.get('output') or data.get('result') or data.get('error') or text
+            text = str(preview)
     except Exception:
         pass
-    return text[:200]
+    return text[:limit]
 
 
 def _truncate_tool_args(args, limit: int = 6) -> dict:
