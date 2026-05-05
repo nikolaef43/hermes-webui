@@ -1,5 +1,67 @@
 # Hermes Web UI -- Changelog
 
+## [v0.51.1] — 2026-05-04 — 11-PR contributor batch from @Michaelyklam
+
+### Added — 11 PRs from a single overnight burst, all per-PR Phase-0 fit-screened
+
+- **#1672** by @Michaelyklam — `ctl.sh` daemon lifecycle script (start/stop/restart/status/logs). Closes #591.
+  - PID ownership via `~/.hermes/webui.pid` with stale-PID cleanup, SIGTERM wait + SIGKILL fallback.
+  - `status` combines local PID state with `/health` probe output.
+  - PID-reuse safety: signals only sent when args check confirms the PID's process is the WebUI.
+  - 195 LOC of tests using temp homes + fake bootstrap targets so no real WebUI is killed during testing.
+- **#1665** by @Michaelyklam — Windows WSL autostart helpers. Closes #513.
+  - `scripts/wsl/hermes_webui_autostart.sh` (lock file, health check, pid file) for WSL shell startup.
+  - `scripts/windows/setup_webui_autostart.ps1` (idempotent Task Scheduler helper, ShouldProcess/-WhatIf, MultipleInstances IgnoreNew) for Windows logon startup.
+  - `docs/wsl-autostart.md` covers both install paths and the diagnostic commands.
+- **#1666** by @Michaelyklam — DOM windowing for long sessions. Closes #734.
+  - `MESSAGE_RENDER_WINDOW_DEFAULT = 50`; renders only ~window of messages around viewport instead of all N.
+- **#1669** by @Michaelyklam — Sidebar list virtualization. Refs #500.
+  - 1000+ session sidebars now render with constant DOM size; spacers above/below the visible window.
+  - `selectAllSessions` updated to use `_sessionVisibleSidebarIds` so virtualization doesn't break "select all" silently.
+- **#1678** by @Michaelyklam — Claude Code session imports.
+  - Reads `~/.claude/projects/*.jsonl` and surfaces them in the sidebar with `data-source-key="claude_code"` styling.
+  - Read-only — no clone/duplicate/delete on Claude Code rows.
+  - HERMES_WEBUI_TEST_STATE_DIR explicitly disables real-home scan inside test envs.
+  - Symlink + oversized-file guards layered at root, project_dir, and file levels (no follow-symlink reads).
+- **#1663** by @Michaelyklam — Plugins visibility panel. Closes #539. Read-only Settings → System → Plugins panel showing plugin/hook config.
+- **#1670** by @Michaelyklam — MCP server visibility panel. Closes #696.
+  - Replaces the prior buggy add/delete UI with a read-only visibility panel.
+  - `GET /api/mcp/servers` extended with `enabled`, `active`, `status`, `tool_count`, `connect_timeout`, `toggle_supported: false`, `reload_required: true`.
+  - Backend add/delete tests preserved.
+- **#1679** by @Michaelyklam — MCP tool inventory. Refs #697 #696.
+  - Searchable Settings → System → MCP Tools panel.
+  - `GET /api/mcp/tools` with sanitized rows (tool name, source server, description, active/enabled/status, compact schema summary).
+  - Schema redaction: parameter name/type/required/description only; defaults/examples/raw schema OMITTED; descriptions Authorization-bearer-token redacted, capped at 180 chars/param + 360 chars/tool.
+- **#1667** by @Michaelyklam — `/status` slash-command card. Closes #463. Opt-in slash command shows session info card (model, provider, project, message count, tokens).
+- **#1668** by @Michaelyklam — Insights tab token trends + per-model cost breakdown. Closes #1456.
+  - Defense-in-depth empty-state handling: client guard `if (dailyTokens.length)`; `Math.max(..., 1)` to prevent division-by-zero; server-side `if total_tokens else 0` guards.
+- **#1674** by @Michaelyklam — Scheduled job profile selector in cron form. Refs #617.
+- **#1677** by @Michaelyklam — Official Hermes dashboard link in top-bar. Closes #1459.
+  - New `api/dashboard_probe.py` probes localhost:9119 for the Hermes Agent dashboard; shows "Dashboard ↗" link if running, hidden otherwise.
+  - SSRF-safe: `_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}`, `DEFAULT_DASHBOARD_TARGETS` only loopback, GET-only, hardcoded `/api/status` path, no DNS lookups outside loopback.
+
+### Tests
+
+4356 → **4429 passing** (+73 regression tests across all 11 PRs). 0 regressions on the full sequential suite. 2 skipped (env-dependent), 3 xpassed (expected failures that pass).
+
+### Pre-release verification
+
+- Full pytest sequential pass — 4429 passing, 0 failures, 113s runtime.
+- JS syntax check on 6 modified `.js` files — all parse clean (`node -c`).
+- Python syntax check on 19 modified `.py` files — all compile clean.
+- QA harness: 20 pytest + 11 browser API checks + `/health` probe — ALL CHECKS PASSED.
+- **Independent review**: Opus advisor on stage-298 diff (4749 LOC). 6/6 security/correctness questions verified clean: SSRF safety on dashboard probe, Claude Code symlink guards, MCP tool schema redaction, ctl.sh PID identity check, sidebar virtualization correctness, Insights division-by-zero. **Verdict: SHIP.** No MUST-FIX or SHOULD-FIX flagged. Two non-blocking polish notes deferred to follow-up: optional post-DNS IP-validation on `dashboard_probe`, and macOS `ps -ww` for ctl.sh args inspection.
+
+### Deferred from this batch
+
+- **#1664** (LLM Wiki status panel) and **#1662** (Logs tab MVP): Both contributor branches predated the v0.51.0 Kanban v1 merge from earlier today. The resulting multi-conflict regions in `static/panels.js` (panel-list array + section-marker block + `archiveKanbanBoard` function boundary) needed careful per-conflict surgery that's better handled as standalone follow-up work. Posted detailed deferral comments on each PR offering either contributor-rebase or maintainer-takes-it.
+- **#1587** (CLI session filter): CONFLICTING — comment posted requesting rebase.
+
+### Author note
+
+This release ships a contributor-burst pattern (17 PRs from @Michaelyklam in 51 minutes overnight). Despite the volume, per-PR claim-vs-diff verification showed no AI-tells, all PR descriptions matched their diffs, all `closes #N` references pointed at real open issues, and security-relevant code paths (file-system reads, outbound HTTP, PID handling, schema redaction) check out under independent review. Eleven PRs landed cleanly in this batch; the remaining six were either deferred for conflict resolution or already in held-state with maintainer-review labels.
+
+
 ## [v0.51.0] — 2026-05-04 — Kanban v1
 
 ### Added — Kanban v1: complete first-party Kanban for Hermes (closes #1645, #1646, #1647, #1649, #1654, #1655, #1660, #1675)
