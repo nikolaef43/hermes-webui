@@ -1196,13 +1196,16 @@
   .workspace-hidden-indicator:hover{background:var(--accent-bg);color:var(--text);border-color:var(--accent-bg-strong,var(--border2));}
   .workspace-hidden-indicator[hidden]{display:none;}
   .workspace-hidden-indicator svg{flex-shrink:0;opacity:.85;}
-  /* When the workspace panel is too narrow to fit heading + chip text
-     comfortably, drop the chip's text and leave just the eye icon. The
-     tooltip still says "Hidden files are visible — click for options".
-     Uses the existing `rightpanel` container declared on .rightpanel. */
-  @container rightpanel (max-width: 360px){
-    .workspace-hidden-indicator span{display:none;}
-    .workspace-hidden-indicator{padding:2px 5px;}
+  /* On narrow workspace panels (the default 300px width), hide the chip
+     entirely — the kebab dot (rendered absolute over the kebab icon) is
+     enough of a "non-default state" signal and costs zero horizontal
+     space. The tooltip on the kebab itself still labels what's going on.
+     On wider panels (resized by the user, or some future layout that
+     gives the panel more room), the full chip with text appears alongside
+     the heading. Uses the existing `rightpanel` container declared on
+     .rightpanel. */
+  @container rightpanel (max-width: 420px){
+    .workspace-hidden-indicator{display:none!important;}
   }
   /* Small accent dot on the kebab button when a non-default pref is on */
   #btnWorkspacePrefs{position:relative;}
