@@ -651,15 +651,16 @@
   /* Usage: add data-tooltip="Label" and class="has-tooltip". For i18n, pair
      with data-i18n-title; static/i18n.js will sync the localized value into
      data-tooltip and clear any stale native title attribute. */
+  /* Design choice: no arrow/caret. At 11px text size and 5px arrow size the
+     triangle reads as visual noise rather than a connector — VS Code, Slack,
+     and Linear's rail tooltips also skip the arrow. Spatial proximity (8px
+     gap) is enough to associate the tooltip with the trigger. */
   .has-tooltip{position:relative;}
-  .has-tooltip::after{content:attr(data-tooltip);position:absolute;left:calc(100% + 12px);top:50%;transform:translateY(-50%);background:var(--surface);border:1px solid var(--border);color:var(--text);font-size:11.5px;font-weight:600;letter-spacing:.02em;padding:5px 10px;border-radius:6px;white-space:nowrap;pointer-events:none;z-index:1500;box-shadow:0 6px 20px rgba(0,0,0,.55),0 0 0 1px rgba(0,0,0,.25);opacity:0;transition:opacity .14s ease;transition-delay:0s;}
-  .has-tooltip::before{content:'';position:absolute;left:calc(100% + 7px);top:50%;transform:translateY(-50%);border-width:5px;border-style:solid;border-color:transparent var(--border) transparent transparent;pointer-events:none;z-index:1501;opacity:0;transition:opacity .14s ease;transition-delay:0s;}
+  .has-tooltip::after{content:attr(data-tooltip);position:absolute;left:calc(100% + 8px);top:50%;transform:translateY(-50%);background:var(--surface);border:1px solid var(--border);color:var(--text);font-size:11.5px;font-weight:600;letter-spacing:.02em;padding:5px 10px;border-radius:6px;white-space:nowrap;pointer-events:none;z-index:1500;box-shadow:0 6px 20px rgba(0,0,0,.55),0 0 0 1px rgba(0,0,0,.25);opacity:0;transition:opacity .14s ease;transition-delay:0s;}
   .has-tooltip:hover::after,.has-tooltip:focus-visible::after{opacity:1;transition-delay:.15s;}
-  .has-tooltip:hover::before,.has-tooltip:focus-visible::before{opacity:1;transition-delay:.15s;}
   /* For bottom-positioned tooltips (panel header buttons, non-rail elements) */
-  .has-tooltip--bottom::after{left:50%;top:auto;bottom:auto;transform:translateX(-50%);top:calc(100% + 10px);}
-  .has-tooltip--bottom::before{left:50%;top:calc(100% + 5px);transform:translateX(-50%);border-color:transparent transparent var(--border) transparent;}
-  @media(prefers-reduced-motion:reduce){.has-tooltip::after,.has-tooltip::before{transition:none;transition-delay:0s;}}
+  .has-tooltip--bottom::after{left:50%;top:auto;bottom:auto;transform:translateX(-50%);top:calc(100% + 8px);}
+  @media(prefers-reduced-motion:reduce){.has-tooltip::after{transition:none;transition-delay:0s;}}
 .rail-spacer{flex:1;min-height:8px;}
 .rail .nav-tab{flex:0 0 auto;padding:0;font-size:inherit;border-bottom:none;overflow:visible;}
 .rail .nav-tab:hover::after{content:none;}
