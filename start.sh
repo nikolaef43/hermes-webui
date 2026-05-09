@@ -9,8 +9,20 @@ set -euo pipefail
 # Sourced from PR #1686 (@binhpt310) — Cluster 1 (operational hardening),
 # extracted to a focused follow-up after the parent PR was deferred over a
 # separate sibling-repo build-context concern unrelated to this fix.
+#
+# Four preconditions to fire (all must hold):
+#   - EUID == 0
+#   - hermeswebui user actually exists (id lookup)
+#   - sudo is on PATH (production image does not ship sudo, so this is the
+#     load-bearing no-op guard for the canonical container path)
+#   - sudo -u hermeswebui passes without prompting (NOPASSWD precheck)
+# The NOPASSWD precheck via `sudo -n -u hermeswebui true` makes this a silent
+# fall-through on host machines where the developer's hermeswebui user
+# requires a password — better than exiting non-zero with `sudo: a password
+# is required` and surprising the user who didn't ask for sudo behavior.
 if [[ ${EUID:-$(id -u)} -eq 0 ]] && id hermeswebui >/dev/null 2>&1 \
-        && command -v sudo >/dev/null 2>&1; then
+        && command -v sudo >/dev/null 2>&1 \
+        && sudo -n -u hermeswebui true 2>/dev/null; then
   exec sudo -n -u hermeswebui "$0" "$@"
 fi
 
