@@ -431,15 +431,58 @@ def _is_valid_image(path: Path, mime: str) -> bool:
     return False
 
 
-def _build_native_multimodal_message(workspace_ctx: str, msg_text: str, attachments, workspace: str):
+def _resolve_image_input_mode(cfg: dict) -> str:
+    """Return ``"native"`` or ``"text"`` based on config, mirroring
+    ``agent/image_routing.py:decide_image_input_mode``.
+
+    The agent has this logic, but the WebUI's ``_build_native_multimodal_message``
+    was unconditionally embedding images as native ``image_url`` parts, completely
+    bypassing ``image_input_mode``.  This caused silent failures when the main model
+    does not support images and the fallback model is also text-only (#21160-related).
+    """
+    agent_cfg = cfg.get("agent") or {}
+    mode = str(agent_cfg.get("image_input_mode", "auto") or "auto").strip().lower()
+    if mode not in ("auto", "native", "text"):
+        mode = "auto"
+
+    if mode == "native":
+        return "native"
+    if mode == "text":
+        return "text"
+
+    # auto: if auxiliary.vision is explicitly configured → text mode
+    # (user opted into a dedicated vision backend)
+    aux = cfg.get("auxiliary") or {}
+    vision = aux.get("vision") or {}
+    provider = str(vision.get("provider") or "").strip().lower()
+    model_name = str(vision.get("model") or "").strip()
+    base_url = str(vision.get("base_url") or "").strip()
+    if provider not in ("", "auto") or model_name or base_url:
+        return "text"
+
+    # No explicit vision config, no model-capability lookup available in WebUI.
+    # Default to native — the agent's ``_strip_images_from_messages`` guard will
+    # strip images on rejection and retry as text.
+    return "native"
+
+
+def _build_native_multimodal_message(workspace_ctx: str, msg_text: str, attachments, workspace: str, *, cfg: dict = None):
     """Build native multimodal content parts for current-turn image uploads.
 
     WebUI uploads files into the active workspace. For image files, pass the
     bytes to Hermes as OpenAI-style image_url data URLs so vision-capable main
     models can consume them in the same request. Non-image files intentionally
     stay as text path attachments so the agent can inspect them with file tools.
+
+    When *cfg* is provided, respects ``agent.image_input_mode`` — if the resolved
+    mode is ``"text"``, returns a plain string (attachments are not embedded) so
+    the agent's text-mode pipeline (``vision_analyze``) handles images.
     """
     if not attachments:
+        return workspace_ctx + msg_text
+
+    # ── Check image_input_mode before embedding anything ──
+    if cfg is not None and _resolve_image_input_mode(cfg) == "text":
         return workspace_ctx + msg_text
 
     parts = [{'type': 'text', 'text': workspace_ctx + msg_text}]
@@ -2654,7 +2697,7 @@ def _run_agent_streaming(
             )
             _ckpt_thread.start()
 
-            user_message = _build_native_multimodal_message(workspace_ctx, msg_text, attachments, workspace)
+            user_message = _build_native_multimodal_message(workspace_ctx, msg_text, attachments, workspace, cfg=_cfg)
             result = agent.run_conversation(
                 user_message=user_message,
                 system_message=workspace_system_msg,
