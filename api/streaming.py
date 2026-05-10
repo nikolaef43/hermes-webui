@@ -2046,6 +2046,23 @@ def _run_agent_streaming(
             os.environ['HERMES_SESSION_KEY'] = session_id
             if _profile_home:
                 os.environ['HERMES_HOME'] = _profile_home
+                # Patch module-level caches to match the active profile.
+                # _set_hermes_home() does this for process-wide switches
+                # but per-request switches skip it (#1700).
+                from pathlib import Path as _P
+                _ph = _P(_profile_home)
+                try:
+                    import tools.skills_tool as _sk
+                    _sk.HERMES_HOME = _ph
+                    _sk.SKILLS_DIR = _ph / 'skills'
+                except (ImportError, AttributeError):
+                    pass
+                try:
+                    import tools.skill_manager_tool as _sm
+                    _sm.HERMES_HOME = _ph
+                    _sm.SKILLS_DIR = _ph / 'skills'
+                except (ImportError, AttributeError):
+                    pass
         # Lock released — agent runs without holding it
         # ── MCP Server Discovery (lazy import, idempotent) ──
         # MUST run AFTER the HERMES_HOME mutation above — `discover_mcp_tools()`
