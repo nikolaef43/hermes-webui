@@ -26,6 +26,7 @@ from api.agent_sessions import (
     MESSAGING_SOURCES,
     is_cli_session_row,
     is_cli_session_row_visible,
+    read_session_lineage_report,
 )
 
 logger = logging.getLogger(__name__)
@@ -3183,6 +3184,15 @@ def handle_get(handler, parsed) -> bool:
                 sess = _merge_cli_sidebar_metadata(sess, cli_meta)
                 return j(handler, {"session": redact_session_data(sess)})
             return bad(handler, "Session not found", 404)
+
+    if parsed.path == "/api/session/lineage/report":
+        sid = parse_qs(parsed.query).get("session_id", [""])[0]
+        if not sid:
+            return bad(handler, "session_id required", 400)
+        report = read_session_lineage_report(_active_state_db_path(), sid)
+        if not report.get("found"):
+            return bad(handler, "Session not found", 404)
+        return j(handler, report)
 
     if parsed.path == "/api/session/status":
         sid = parse_qs(parsed.query).get("session_id", [""])[0]
