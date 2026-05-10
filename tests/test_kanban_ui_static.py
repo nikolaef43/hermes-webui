@@ -806,6 +806,14 @@ def test_kanban_profile_assignee_cache_has_invalidation_path():
         "Profile delete flow should invalidate Kanban assignee cache after success."
     )
 
+    ui_delete_start = PANELS.find("async function deleteCurrentProfile(){")
+    assert ui_delete_start != -1, "Missing deleteCurrentProfile() declaration"
+    ui_delete_end = PANELS.find("\n\nfunction renderProfileDropdown", ui_delete_start)
+    ui_delete_body = PANELS[ui_delete_start:ui_delete_end if ui_delete_end != -1 else ui_delete_start + 1300]
+    assert "_invalidateKanbanProfileCache();" in ui_delete_body, (
+        "Profile detail delete flow (deleteCurrentProfile) should invalidate Kanban assignee cache after success."
+    )
+
 
 def test_kanban_archive_board_uses_showConfirmDialog():
     """Archive is destructive → must use the styled showConfirmDialog,
