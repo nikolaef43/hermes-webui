@@ -6535,6 +6535,7 @@ const LOCALES = {
     kanban_description: '描述',
     kanban_description_placeholder: '選填 — 需要完成的事項、驗收標準、連結',
     kanban_status: '狀態',
+    kanban_status_original_hint: '實際狀態：{0}。此對話框僅支援編輯 Triage/Todo/Ready。',
     kanban_assignee: '指派對象',
     kanban_assignee_placeholder: '選填 — 個人資料或名稱',
     kanban_tenant: '租戶',

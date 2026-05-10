@@ -593,6 +593,7 @@ def test_kanban_modal_locale_parity():
         "kanban_priority",
         "kanban_priority_hint",
         "kanban_title_required",
+        "kanban_status_original_hint",
     ]
     anchor_key = "kanban_status"
     missing = [
