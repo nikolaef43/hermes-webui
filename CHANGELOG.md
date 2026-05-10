@@ -22,6 +22,10 @@
 
 5049 → **5054 collected, 5054 passing, 0 regressions** (+5 net new). Full suite 154s on Python 3.11 with `HERMES_HOME` isolation.
 
+### Stage augmentation
+
+- **`9242305a`** — Opus advisor flagged that `kanban_status_original_hint` (added by #1995) was missing in the `zh-Hant` block, so Traditional Chinese users would get the English fallback. Added the Traditional Chinese translation (`實際狀態：{0}。此對話框僅支援編輯 Triage/Todo/Ready。`) at line 6537 and extended `tests/test_kanban_ui_static.py::test_kanban_modal_locales_have_full_modal_vocabulary`'s `modal_keys` list to assert the key — so any future kanban modal key added without zh-Hant translation will fail CI.
+
 ### Notes
 
 - `static/panels.js` was the high-collision file in this batch (5 PRs touched it). Stage merge cleanly; one syntactic conflict at the `_kanbanProfileNamesCache` declaration block when #1995 landed on top of #1993 — both PRs added new module-level `let` declarations adjacent to `_kanbanProfileNamesCache`. Resolved by preserving both declaration blocks (the variables are independent).
