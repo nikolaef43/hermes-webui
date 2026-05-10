@@ -472,6 +472,38 @@ def test_kanban_i18n_keys_exist_in_every_locale_block():
     assert missing == []
 
 
+def test_kanban_modal_locale_parity():
+    """Parity check for modal-facing Kanban i18n keys.
+
+    Any locale that already contains modal-facing Kanban strings should include the
+    same set of modal vocabulary so new additions don't regress into locale gaps.
+    """
+    locale_blocks = re.findall(r"\n\s*([a-z]{2}(?:-[A-Z]{2})?): \{(.*?)\n\s*\},", I18N, flags=re.S)
+    modal_keys = [
+        "kanban_title",
+        "kanban_description",
+        "kanban_description_placeholder",
+        "kanban_status",
+        "kanban_assignee",
+        "kanban_assignee_placeholder",
+        "kanban_tenant",
+        "kanban_tenant_placeholder",
+        "kanban_priority",
+        "kanban_priority_hint",
+        "kanban_title_required",
+    ]
+    anchor_key = "kanban_no_comments"
+    missing = [
+        f"{locale}:{key}"
+        for locale, body in locale_blocks
+        if re.search(rf"\b{re.escape(anchor_key)}\s*:", body) is not None
+        for key in modal_keys
+        if re.search(rf"\b{re.escape(key)}\s*:", body) is None
+    ]
+    assert missing == []
+
+
+
 
 def test_kanban_dashboard_parity_core_controls_are_native():
     assert 'id="kanbanOnlyMine"' in INDEX
