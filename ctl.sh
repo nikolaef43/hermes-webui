@@ -215,7 +215,7 @@ start_cmd() {
   : >> "${LOG_FILE}"
   (
     cd "${REPO_ROOT}"
-    exec "${python_exe}" "${REPO_ROOT}/bootstrap.py" --no-browser --foreground --host "${CTL_HOST}" "${CTL_PORT}" "${CTL_BOOTSTRAP_ARGS[@]}"
+    exec "${python_exe}" "${REPO_ROOT}/bootstrap.py" --no-browser --foreground --host "${CTL_HOST}" "${CTL_PORT}" ${CTL_BOOTSTRAP_ARGS[@]+"${CTL_BOOTSTRAP_ARGS[@]}"}
   ) >> "${LOG_FILE}" 2>&1 &
   pid=$!
 
