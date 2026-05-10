@@ -1679,6 +1679,7 @@ async function createKanbanTask(){
 let _kanbanTaskModalMode = 'create';   // 'create' | 'edit'
 let _kanbanTaskModalEditingId = null;  // task id when mode === 'edit'
 let _kanbanProfileNamesCache = null;   // populated lazily on first modal open
+let _kanbanTaskModalFocusCleanup = null;
 // Status the modal *displayed* on edit-mode open.  If the user doesn't touch
 // the dropdown, we must NOT send `status` in the PATCH payload — otherwise
 // editing a task whose real status is non-editable in this dropdown
@@ -1687,6 +1688,7 @@ let _kanbanProfileNamesCache = null;   // populated lazily on first modal open
 // review: editing a 'running' task without touching status was reclaiming
 // the worker and moving the task back to triage.
 let _kanbanTaskModalInitialDisplayedStatus = null;
+let _kanbanBoardModalFocusCleanup = null;
 
 async function _kanbanLoadProfileNames(){
   // Hit /api/profiles once per session and cache; refresh is cheap if needed.
@@ -1785,6 +1787,11 @@ function openKanbanCreate(){
   });
   _kanbanPopulateTenantDatalist();
   modal.hidden = false;
+  if (_kanbanTaskModalFocusCleanup) {
+    _kanbanTaskModalFocusCleanup();
+    _kanbanTaskModalFocusCleanup = null;
+  }
+  _kanbanTaskModalFocusCleanup = _trapModalFocus(modal);
   setTimeout(() => {
     const titleEl = document.getElementById('kanbanTaskModalTitleInput');
     if (titleEl) titleEl.focus();
@@ -1834,6 +1841,11 @@ async function openKanbanEdit(taskId){
   _kanbanSetTaskModalLabels('edit');
   _kanbanPopulateTenantDatalist();
   modal.hidden = false;
+  if (_kanbanTaskModalFocusCleanup) {
+    _kanbanTaskModalFocusCleanup();
+    _kanbanTaskModalFocusCleanup = null;
+  }
+  _kanbanTaskModalFocusCleanup = _trapModalFocus(modal);
   setTimeout(() => {
     const titleEl = document.getElementById('kanbanTaskModalTitleInput');
     if (titleEl) { titleEl.focus(); titleEl.select(); }
@@ -1901,6 +1913,44 @@ function _kanbanPopulateTenantDatalist(){
   if (tList) tList.innerHTML = tenants.map(v => `<option value="${esc(v)}"></option>`).join('');
 }
 
+function _trapModalFocus(modalEl){
+  if (!modalEl) return () => {};
+  const selector = 'a[href], button, textarea, input, select, summary, [tabindex]:not([tabindex="-1"])';
+  const collect = () => {
+    const candidates = Array.from(modalEl.querySelectorAll(selector));
+    return candidates.filter((el) => {
+      if (el.disabled || el.hidden) return false;
+      const style = getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+      return el.tabIndex >= 0;
+    });
+  };
+  let focusableEls = collect();
+  const onKeyDown = (ev) => {
+    if (ev.key !== 'Tab') return;
+    if (!focusableEls.length) {
+      ev.preventDefault();
+      return;
+    }
+    const current = document.activeElement;
+    let idx = focusableEls.indexOf(current);
+    if (idx === -1) {
+      ev.preventDefault();
+      focusableEls[0].focus();
+      return;
+    }
+    if (ev.shiftKey) idx -= 1;
+    else idx += 1;
+    idx = (idx + focusableEls.length) % focusableEls.length;
+    ev.preventDefault();
+    focusableEls[idx].focus();
+  };
+  modalEl.addEventListener('keydown', onKeyDown);
+  return () => {
+    modalEl.removeEventListener('keydown', onKeyDown);
+  };
+}
+
 function closeKanbanTaskModal(){
   const modal = document.getElementById('kanbanTaskModal');
   if (modal) modal.hidden = true;
@@ -1908,6 +1958,10 @@ function closeKanbanTaskModal(){
   _kanbanTaskModalEditingId = null;
   _kanbanTaskModalInitialDisplayedStatus = null;
   _kanbanSetTaskModalStatusHint(null, null);
+  if (_kanbanTaskModalFocusCleanup) {
+    _kanbanTaskModalFocusCleanup();
+    _kanbanTaskModalFocusCleanup = null;
+  }
   document.removeEventListener('keydown', _kanbanTaskModalKey);
 }
 
@@ -2346,6 +2400,11 @@ function openKanbanCreateBoard(){
   document.getElementById('kanbanBoardModalColor').value = '#7aa2ff';
   document.getElementById('kanbanBoardModalError').textContent = '';
   modal.hidden = false;
+  if (_kanbanBoardModalFocusCleanup) {
+    _kanbanBoardModalFocusCleanup();
+    _kanbanBoardModalFocusCleanup = null;
+  }
+  _kanbanBoardModalFocusCleanup = _trapModalFocus(modal);
   // Auto-focus name field
   setTimeout(() => document.getElementById('kanbanBoardModalName').focus(), 50);
   // Auto-suggest slug from name as user types
@@ -2385,6 +2444,11 @@ function openKanbanRenameBoard(){
   document.getElementById('kanbanBoardModalColor').value = meta.color || '#7aa2ff';
   document.getElementById('kanbanBoardModalError').textContent = '';
   modal.hidden = false;
+  if (_kanbanBoardModalFocusCleanup) {
+    _kanbanBoardModalFocusCleanup();
+    _kanbanBoardModalFocusCleanup = null;
+  }
+  _kanbanBoardModalFocusCleanup = _trapModalFocus(modal);
   setTimeout(() => document.getElementById('kanbanBoardModalName').focus(), 50);
   document.addEventListener('keydown', _kanbanBoardModalEsc);
 }
@@ -2396,6 +2460,10 @@ function _kanbanBoardModalEsc(ev){
 function closeKanbanBoardModal(){
   const modal = document.getElementById('kanbanBoardModal');
   if (modal) modal.hidden = true;
+  if (_kanbanBoardModalFocusCleanup) {
+    _kanbanBoardModalFocusCleanup();
+    _kanbanBoardModalFocusCleanup = null;
+  }
   document.removeEventListener('keydown', _kanbanBoardModalEsc);
 }
 
