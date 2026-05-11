@@ -1,5 +1,9 @@
 # RFC: WebUI Turn Journal for Crash-Safe Chat Submissions
 
+- **Status:** Proposed
+- **Author:** @ai-ag2026
+- **Created:** 2026-05-11
+
 ## Problem
 
 A WebUI chat turn crosses several durability boundaries:
@@ -19,7 +23,7 @@ The missing primitive is a small write-ahead journal for turns: record the submi
 - Preserve the exact user-submitted turn, including attachments metadata, before any provider or worker work starts.
 - Make crash recovery deterministic: a submitted-but-unfinished turn can be reported or reconstructed without guessing.
 - Keep the journal append/update format simple enough for startup recovery, CLI audit, and future API repair endpoints.
-- Avoid turning recovery into a background daemon. This is storage hygiene, not a tiny cult with a scheduler.
+- Avoid turning recovery into a background daemon. This is storage hygiene, not a long-running service.
 
 ## Non-goals
 
@@ -151,4 +155,4 @@ The first implementation PR should be deliberately small:
 - one call site: append `submitted` before worker start
 - audit-only report of pending journal turns
 
-Do **not** combine the first implementation with replay/repair. Replay is where footguns rent office space.
+Do **not** combine the first implementation with replay/repair. Replay is where most of the bugs in WAL systems live; ship the writer and audit first, prove the format, then add repair.
