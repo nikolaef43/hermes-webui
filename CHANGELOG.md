@@ -22,7 +22,7 @@
 
 ### Tests
 
-5108 → **5131 passing, 0 regressions** (+23 across new test files for session-recovery-API HTTP-shape contracts, state.db sidecar reconciliation including the round-trip schema-parity guard and the per-pid tmp-suffix guard, and the MEDIA_ALLOWED_ROOTS static reference).
+5108 → **5120 passing, 8 skipped, 1 xfailed, 2 xpassed, 0 regressions** (+12 net passing across new test files for session-recovery-API HTTP-shape contracts, state.db sidecar reconciliation including the round-trip schema-parity guard and the per-pid tmp-suffix guard, and the MEDIA_ALLOWED_ROOTS static reference). Full suite ~161s on Python 3.11 with `HERMES_HOME` isolation.
 
 ### Notes
 
