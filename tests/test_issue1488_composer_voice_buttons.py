@@ -171,6 +171,8 @@ class TestComposerVoiceButtonI18n:
 class TestVoiceModePreferenceGate:
     """boot.js must hide btnVoiceMode by default, surface it via Preferences."""
 
+    LOCALES = ("en", "it", "ja", "ru", "es", "de", "zh", "zh-Hant", "pt", "ko")
+
     def test_voice_mode_pref_is_localstorage_backed(self):
         """The pref reads from localStorage key 'hermes-voice-mode-button'."""
         src = _src("boot.js")
