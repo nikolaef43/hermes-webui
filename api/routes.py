@@ -3823,7 +3823,7 @@ def handle_post(handler, parsed) -> bool:
     if parsed.path == "/api/session/recovery/repair-safe":
         from api.session_recovery import repair_safe_session_recovery
         result = repair_safe_session_recovery(SESSION_DIR, state_db_path=_active_state_db_path())
-        return j(handler, result, status=200 if result.get("ok") else 409)
+        return j(handler, result, status=200 if result.get("clean") else 409)
 
     if parsed.path.startswith("/api/kanban/"):
         from api.kanban_bridge import handle_kanban_post
@@ -5607,7 +5607,7 @@ def _handle_media(handler, parsed):
     - SVG always served as attachment (XSS risk)
     - No path traversal: resolved path must stay within an allowed root
     - Additional roots can be added via MEDIA_ALLOWED_ROOTS env var
-      (colon-separated list of absolute paths)
+      (os.pathsep-separated list of absolute paths; ":" on POSIX, ";" on Windows)
     """
     import os as _os
     from api.auth import is_auth_enabled, parse_cookie, verify_session
@@ -5653,10 +5653,10 @@ def _handle_media(handler, parsed):
         pass
 
     # Also allow additional roots from MEDIA_ALLOWED_ROOTS env var
-    # (colon-separated list of absolute paths, e.g. /home/user/models:/home/user/Pictures)
+    # (os.pathsep-separated list; ":" on POSIX, ";" on Windows).
     extra_roots = _os.environ.get("MEDIA_ALLOWED_ROOTS", "").strip()
     if extra_roots:
-        for root in extra_roots.split(":"):
+        for root in extra_roots.split(_os.pathsep):
             root = root.strip()
             if root:
                 try:
