@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Fixed duplicate assistant messages in browser chat transcripts by ignoring adjacent assistant replay duplicates during server-side result merge while preserving identical assistant text across separate user turns (#2051).
+
 ## [v0.51.43] — 2026-05-11 — Release S (fused community PR — desktop sidebar collapse)
 
 ### Added
