@@ -4147,6 +4147,7 @@ def handle_post(handler, parsed) -> bool:
             return bad(handler, "Invalid session_id", 400)
         try:
             p.unlink(missing_ok=True)
+            p.with_suffix('.json.bak').unlink(missing_ok=True)
         except Exception:
             logger.debug("Failed to unlink session file %s", p)
         # Prune the per-session agent lock so deleted sessions don't leak

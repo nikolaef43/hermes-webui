@@ -5,13 +5,16 @@ data-loss bugs like #1558.
 ``Session.save()`` writes a ``<sid>.json.bak`` snapshot of the previous
 state whenever an incoming save would shrink the messages array. This
 module reads those snapshots back and restores any session whose live
-file has fewer messages than its backup.
+file has fewer messages than its backup, or whose live file is missing
+while a valid backup remains.
 
 Three integration points:
 
 1. ``recover_all_sessions_on_startup()`` — called from server.py at boot,
    scans the session dir, restores any session whose JSON has fewer
-   messages than its .bak. Idempotent: a clean run is a no-op.
+   messages than its .bak, and recreates a missing ``<sid>.json`` from an
+   orphaned ``<sid>.json.bak`` when the canonical state DB still has that
+   session. Idempotent: a clean run is a no-op.
 
 2. ``recover_session(sid)`` — single-session helper backing the
    ``POST /api/session/recover`` endpoint, so users can re-run recovery
@@ -25,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import sqlite3
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -117,24 +121,81 @@ def recover_session(session_path: Path) -> dict:
     return {**status, "restored": True}
 
 
-def recover_all_sessions_on_startup(session_dir: Path) -> dict:
-    """Scan session_dir for shrunken sessions, restore each from its .bak.
+def _state_db_has_session(session_id: str, state_db_path: Path | None) -> bool:
+    """Return whether state.db still knows this session.
 
-    Returns {"scanned": N, "restored": M, "details": [...]}.
+    The check is deliberately fail-open: recovery must not be prevented by a
+    locked, absent, or older-schema state DB. When a DB is readable and has no
+    row, treat the orphan backup as a tombstoned/deleted session and skip it.
+    """
+    if state_db_path is None or not state_db_path.exists():
+        return True
+    try:
+        with sqlite3.connect(f"file:{state_db_path}?mode=ro", uri=True) as conn:
+            cur = conn.execute(
+                "select 1 from sqlite_master where type='table' and name='sessions'"
+            )
+            if cur.fetchone() is None:
+                return True
+            cur = conn.execute("select 1 from sessions where id = ? limit 1", (session_id,))
+            return cur.fetchone() is not None
+    except Exception as exc:
+        logger.debug("state_db session tombstone check failed for %s: %s", session_id, exc)
+        return True
+
+
+def _orphaned_backup_live_paths(
+    session_dir: Path,
+    state_db_path: Path | None = None,
+) -> list[Path]:
+    """Return live ``<sid>.json`` paths whose ``<sid>.json.bak`` exists.
+
+    ``Path.glob('*.json')`` does not see orphan backups because their suffix is
+    ``.bak``. Existing startup recovery only handled shrunken live files; this
+    helper covers the crash shape where the live sidecar is gone but the rescue
+    copy remains.
+    """
+    paths: list[Path] = []
+    for bak_path in sorted(session_dir.glob('*.json.bak')):
+        live_path = bak_path.with_suffix('')
+        if live_path.name.startswith('_') or live_path.exists():
+            continue
+        if _msg_count(bak_path) < 0:
+            continue
+        session_id = live_path.stem
+        if not _state_db_has_session(session_id, state_db_path):
+            logger.info(
+                "recover_all_sessions_on_startup: skipped orphan backup %s; "
+                "state.db has no live session row",
+                bak_path.name,
+            )
+            continue
+        paths.append(live_path)
+    return paths
+
+
+def recover_all_sessions_on_startup(
+    session_dir: Path,
+    rebuild_index: bool = False,
+    state_db_path: Path | None = None,
+) -> dict:
+    """Scan session_dir for shrunken/orphaned sessions and restore from .bak.
+
+    Returns {"scanned": N, "restored": M, "orphaned_backups": K, "details": [...]}.
     """
     if not session_dir.exists():
-        return {"scanned": 0, "restored": 0, "details": []}
+        return {"scanned": 0, "restored": 0, "orphaned_backups": 0, "details": []}
     scanned = 0
     restored = 0
     details: list[dict] = []
-    for path in session_dir.glob('*.json'):
+    live_paths = [path for path in sorted(session_dir.glob('*.json')) if not path.name.startswith('_')]
+    orphan_paths = _orphaned_backup_live_paths(session_dir, state_db_path=state_db_path)
+    for path in [*live_paths, *orphan_paths]:
         # Skip non-session JSON files in the same dir:
         # - ``_index.json`` is a top-level list of session metadata
         # - any future non-session JSON marked with the ``_`` convention is
         #   skipped automatically (project convention for system files in
         #   directories that otherwise hold user data)
-        if path.name.startswith('_'):
-            continue
         scanned += 1
         try:
             result = recover_session(path)
@@ -155,4 +216,15 @@ def recover_all_sessions_on_startup(session_dir: Path) -> dict:
             "If you weren't expecting this, check the session list for missing "
             "messages — see #1558.", restored, scanned,
         )
-    return {"scanned": scanned, "restored": restored, "details": details}
+        if rebuild_index:
+            try:
+                from api.models import _write_session_index
+                _write_session_index(updates=None)
+            except Exception as exc:
+                logger.warning("recover_all_sessions_on_startup: index rebuild failed: %s", exc)
+    return {
+        "scanned": scanned,
+        "restored": restored,
+        "orphaned_backups": len(orphan_paths),
+        "details": details,
+    }
