@@ -28,6 +28,7 @@ from api.agent_sessions import (
     is_cli_session_row_visible,
     read_session_lineage_report,
 )
+from api.compression_anchor import visible_messages_for_anchor
 
 logger = logging.getLogger(__name__)
 
@@ -7563,51 +7564,6 @@ def _handle_clarify_respond(handler, body):
 
 
 def _handle_session_compress(handler, body):
-    def _visible_messages_for_anchor(messages):
-        out = []
-        for m in messages or []:
-            if not isinstance(m, dict):
-                continue
-            role = m.get("role")
-            if not role or role == "tool":
-                continue
-            content = m.get("content", "")
-            has_attachments = bool(m.get("attachments"))
-            if role == "assistant":
-                tool_calls = m.get("tool_calls")
-                has_tool_calls = isinstance(tool_calls, list) and len(tool_calls) > 0
-                has_tool_use = False
-                has_reasoning = bool(m.get("reasoning"))
-                if isinstance(content, list):
-                    for p in content:
-                        if not isinstance(p, dict):
-                            continue
-                        if p.get("type") == "tool_use":
-                            has_tool_use = True
-                        if p.get("type") in {"thinking", "reasoning"}:
-                            has_reasoning = True
-                    text = "\n".join(
-                        str(p.get("text") or p.get("content") or "")
-                        for p in content
-                        if isinstance(p, dict) and p.get("type") == "text"
-                    ).strip()
-                else:
-                    text = str(content or "").strip()
-                if text or has_attachments or has_tool_calls or has_tool_use or has_reasoning:
-                    out.append(m)
-                continue
-            if isinstance(content, list):
-                text = "\n".join(
-                    str(p.get("text") or p.get("content") or "")
-                    for p in content
-                    if isinstance(p, dict) and p.get("type") == "text"
-                ).strip()
-            else:
-                text = str(content or "").strip()
-            if text or has_attachments:
-                out.append(m)
-        return out
-
     def _anchor_message_key(m):
         if not isinstance(m, dict):
             return None
@@ -7846,7 +7802,7 @@ def _handle_session_compress(handler, body):
             s.pending_user_message = None
             s.pending_attachments = []
             s.pending_started_at = None
-            visible_after = _visible_messages_for_anchor(compressed)
+            visible_after = visible_messages_for_anchor(compressed, auto_compression=False)
             s.compression_anchor_visible_idx = max(0, len(visible_after) - 1) if visible_after else None
             s.compression_anchor_message_key = _anchor_message_key(visible_after[-1]) if visible_after else None
             summary_text = None
