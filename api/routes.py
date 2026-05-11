@@ -2529,6 +2529,39 @@ def _streams_lock_health(timeout_seconds: float = 0.5) -> dict:
         STREAMS_LOCK.release()
 
 
+def _run_lifecycle_health() -> dict:
+    """Return active worker-run state independent of SSE stream presence."""
+    # Import the module rather than relying only on imported scalar aliases so
+    # LAST_RUN_FINISHED_AT stays fresh after unregister_active_run() updates it.
+    from api import config as _live_config
+
+    now = time.time()
+    with _live_config.ACTIVE_RUNS_LOCK:
+        runs = []
+        for stream_id, raw in (_live_config.ACTIVE_RUNS or {}).items():
+            item = dict(raw or {})
+            started_at = item.get("started_at")
+            try:
+                age = max(0.0, now - float(started_at))
+            except Exception:
+                age = 0.0
+            item.setdefault("stream_id", stream_id)
+            item["age_seconds"] = round(age, 1)
+            runs.append(item)
+        last_finished = _live_config.LAST_RUN_FINISHED_AT
+    runs.sort(key=lambda item: float(item.get("started_at") or 0.0))
+    payload = {
+        "active_runs": len(runs),
+        "runs": runs,
+        "last_run_finished_at": last_finished,
+    }
+    if runs:
+        payload["oldest_run_age_seconds"] = runs[0].get("age_seconds", 0.0)
+    elif last_finished:
+        payload["idle_seconds_since_last_run"] = round(max(0.0, now - float(last_finished)), 1)
+    return payload
+
+
 def _deep_health_checks(stream_check: dict | None = None) -> tuple[dict, bool]:
     """Run cheap probes that exercise the state paths used by the UI shell.
 
@@ -2609,13 +2642,21 @@ def _deep_health_checks(stream_check: dict | None = None) -> tuple[dict, bool]:
 def _handle_health(handler, parsed):
     deep = parse_qs(parsed.query or "").get("deep", [""])[0].lower() in {"1", "true", "yes", "on"}
     stream_check = _streams_lock_health()
+    run_check = _run_lifecycle_health()
     payload = {
         "status": "ok" if stream_check.get("status") == "ok" else "degraded",
         "sessions": len(SESSIONS),
         "active_streams": int(stream_check.get("active_streams") or 0),
+        "active_runs": int(run_check.get("active_runs") or 0),
+        "runs": run_check.get("runs", []),
+        "last_run_finished_at": run_check.get("last_run_finished_at"),
         "uptime_seconds": round(time.time() - SERVER_START_TIME, 1),
         "accept_loop": _accept_loop_health(handler),
     }
+    if "oldest_run_age_seconds" in run_check:
+        payload["oldest_run_age_seconds"] = run_check["oldest_run_age_seconds"]
+    if "idle_seconds_since_last_run" in run_check:
+        payload["idle_seconds_since_last_run"] = run_check["idle_seconds_since_last_run"]
     if deep:
         if stream_check.get("status") != "ok":
             payload["checks"] = {"streams_lock": stream_check}
