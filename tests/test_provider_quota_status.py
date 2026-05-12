@@ -278,27 +278,31 @@ def test_codex_account_usage_unavailable_is_sanitized(monkeypatch, tmp_path):
     assert "secret" not in repr(result).lower()
 
 
-def test_codex_account_usage_subprocess_falls_back_to_credential_pool(monkeypatch, capsys):
-    """Codex quota probes should use credential_pool credentials when legacy auth misses."""
+def test_codex_account_usage_subprocess_reports_read_only_credential_pool(monkeypatch, capsys):
+    """Codex quota probes should inspect pool entries without mutating selection order."""
     import api.providers as providers
 
     def b64url(payload: bytes) -> str:
         return base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
 
-    token = ".".join((
-        b64url(b'{"alg":"none","typ":"JWT"}'),
-        b64url(json.dumps({
-            "https://api.openai.com/auth": {
-                "chatgpt_account_id": "acct-test-123",
-            },
-        }).encode("utf-8")),
-        b64url(b"signature"),
-    ))
+    def token_for(account_id: str) -> str:
+        return ".".join((
+            b64url(b'{"alg":"none","typ":"JWT"}'),
+            b64url(json.dumps({
+                "https://api.openai.com/auth": {
+                    "chatgpt_account_id": account_id,
+                },
+            }).encode("utf-8")),
+            b64url(b"signature"),
+        ))
+
+    primary_token = token_for("acct-primary")
+    exhausted_token = token_for("acct-exhausted")
 
     fetch_calls = []
     load_pool_calls = []
-    selected = []
-    seen = {}
+    entries_called = []
+    seen = []
 
     agent_mod = types.ModuleType("agent")
     agent_mod.__path__ = []
@@ -310,25 +314,41 @@ def test_codex_account_usage_subprocess_falls_back_to_credential_pool(monkeypatc
         return None
 
     class FakePool:
+        def entries(self):
+            entries_called.append(True)
+            return [
+                SimpleNamespace(
+                    label="Team primary",
+                    runtime_api_key=primary_token,
+                    runtime_base_url="https://chatgpt.com/backend-api/codex",
+                    last_status=None,
+                ),
+                SimpleNamespace(
+                    label="Plus backup",
+                    runtime_api_key=exhausted_token,
+                    runtime_base_url="https://chatgpt.com/backend-api/codex",
+                    last_status="exhausted",
+                ),
+            ]
+
         def select(self):
-            selected.append(True)
-            return SimpleNamespace(
-                runtime_api_key=token,
-                runtime_base_url="https://chatgpt.com/backend-api/codex",
-            )
+            raise AssertionError("quota display must not rotate credential_pool selection")
 
     def fake_load_pool(provider):
         load_pool_calls.append(provider)
         return FakePool()
 
     def fake_urlopen(req, timeout):
-        seen["url"] = req.full_url
-        seen["timeout"] = timeout
-        seen["headers"] = {key.lower(): value for key, value in req.header_items()}
+        headers = {key.lower(): value for key, value in req.header_items()}
+        seen.append({
+            "url": req.full_url,
+            "timeout": timeout,
+            "headers": headers,
+        })
         payload = {
-            "plan_type": "pro",
+            "plan_type": "pro" if headers.get("chatgpt-account-id") == "acct-primary" else "plus",
             "rate_limit": {
-                "primary_window": {"used_percent": 15, "reset_at": 1_900_000_000},
+                "primary_window": {"used_percent": 15 if headers.get("chatgpt-account-id") == "acct-primary" else 95, "reset_at": 1_900_000_000},
                 "secondary_window": {"used_percent": 40, "reset_at": "2030-03-24T12:30:00Z"},
             },
             "credits": {"has_credits": True, "balance": 12.5},
@@ -350,24 +370,156 @@ def test_codex_account_usage_subprocess_falls_back_to_credential_pool(monkeypatc
 
     assert fetch_calls == [("openai-codex", None, None)]
     assert load_pool_calls == ["openai-codex"]
-    assert selected == [True]
-    assert seen["url"] == "https://chatgpt.com/backend-api/wham/usage"
-    assert seen["timeout"] == 15.0
-    headers = seen["headers"]
-    assert headers["authorization"] == f"Bearer {token}"
-    assert headers["accept"] == "application/json"
-    assert headers["originator"] == "codex_cli_rs"
-    assert headers["user-agent"].startswith("codex_cli_rs/")
-    assert headers["chatgpt-account-id"] == "acct-test-123"
+    assert entries_called == [True]
+    assert [call["url"] for call in seen] == [
+        "https://chatgpt.com/backend-api/wham/usage",
+        "https://chatgpt.com/backend-api/wham/usage",
+    ]
+    assert [call["timeout"] for call in seen] == [4.0, 4.0]
+    assert seen[0]["headers"]["authorization"] == f"Bearer {primary_token}"
+    assert seen[0]["headers"]["chatgpt-account-id"] == "acct-primary"
+    assert seen[1]["headers"]["chatgpt-account-id"] == "acct-exhausted"
     assert snapshot["provider"] == "openai-codex"
-    assert snapshot["source"] == "usage_api"
-    assert snapshot["plan"] == "Pro"
+    assert snapshot["source"] == "usage_api_pool"
     assert snapshot["windows"][0]["label"] == "Session"
-    assert snapshot["windows"][0]["used_percent"] == 15.0
-    assert snapshot["windows"][1]["label"] == "Weekly"
-    assert snapshot["details"] == ["Credits balance: $12.50"]
+    assert snapshot["windows"][0]["used_percent"] == 15
+    assert snapshot["details"] == ["1/2 credentials available", "1 exhausted", "Plans: Pro, Plus"]
     assert snapshot["available"] is True
-    assert token not in output
+    assert snapshot["pool"] == {
+        "total_credentials": 2,
+        "queried_credentials": 2,
+        "available_credentials": 1,
+        "exhausted_credentials": 1,
+        "failed_credentials": 0,
+        "plans": ["Pro", "Plus"],
+        "next_reset_at": "2030-03-17T17:46:40Z",
+        "best_remaining_by_window": [
+            {
+                "label": "Session",
+                "remaining_percent": 85.0,
+                "used_percent": 15.0,
+                "reset_at": "2030-03-17T17:46:40Z",
+                "detail": None,
+                "credential_label": "Team primary",
+            },
+            {
+                "label": "Weekly",
+                "remaining_percent": 60.0,
+                "used_percent": 40.0,
+                "reset_at": "2030-03-24T12:30:00Z",
+                "detail": None,
+                "credential_label": "Team primary",
+            },
+        ],
+        "credentials": [
+            {
+                "label": "Team primary",
+                "status": "available",
+                "plan": "Pro",
+                "windows": [
+                    {
+                        "label": "Session",
+                        "used_percent": 15.0,
+                        "remaining_percent": 85.0,
+                        "reset_at": "2030-03-17T17:46:40Z",
+                        "detail": None,
+                    },
+                    {
+                        "label": "Weekly",
+                        "used_percent": 40.0,
+                        "remaining_percent": 60.0,
+                        "reset_at": "2030-03-24T12:30:00Z",
+                        "detail": None,
+                    },
+                ],
+                "details": ["Credits balance: $12.50"],
+                "unavailable_reason": None,
+                "fetched_at": snapshot["pool"]["credentials"][0]["fetched_at"],
+            },
+            {
+                "label": "Plus backup",
+                "status": "exhausted",
+                "plan": "Plus",
+                "windows": [
+                    {
+                        "label": "Session",
+                        "used_percent": 95.0,
+                        "remaining_percent": 5.0,
+                        "reset_at": "2030-03-17T17:46:40Z",
+                        "detail": None,
+                    },
+                    {
+                        "label": "Weekly",
+                        "used_percent": 40.0,
+                        "remaining_percent": 60.0,
+                        "reset_at": "2030-03-24T12:30:00Z",
+                        "detail": None,
+                    },
+                ],
+                "details": ["Credits balance: $12.50"],
+                "unavailable_reason": None,
+                "fetched_at": snapshot["pool"]["credentials"][1]["fetched_at"],
+            },
+        ],
+    }
+    assert primary_token not in output
+    assert exhausted_token not in output
+
+
+
+def test_codex_account_usage_subprocess_sanitizes_pool_entry_errors(monkeypatch, capsys):
+    """Pool per-entry failures must not leak bearer/JWT-like exception text."""
+    import api.providers as providers
+
+    fetch_calls = []
+    agent_mod = types.ModuleType("agent")
+    agent_mod.__path__ = []
+    account_usage_mod = types.ModuleType("agent.account_usage")
+    credential_pool_mod = types.ModuleType("agent.credential_pool")
+
+    def fake_fetch_account_usage(provider, *, base_url=None, api_key=None):
+        fetch_calls.append((provider, base_url, api_key))
+        return None
+
+    class FakePool:
+        def entries(self):
+            return [
+                SimpleNamespace(
+                    label="Bad token",
+                    runtime_api_key="header.payload.signature",
+                    runtime_base_url="https://chatgpt.com/backend-api/codex",
+                    last_status=None,
+                ),
+            ]
+
+        def select(self):
+            raise AssertionError("quota display must not rotate credential_pool selection")
+
+    def fake_load_pool(provider):
+        return FakePool()
+
+    def fake_urlopen(_req, timeout):
+        raise RuntimeError("Bearer eyJsecret-token-like-value should not leak")
+
+    account_usage_mod.fetch_account_usage = fake_fetch_account_usage
+    credential_pool_mod.load_pool = fake_load_pool
+    monkeypatch.setitem(sys.modules, "agent", agent_mod)
+    monkeypatch.setitem(sys.modules, "agent.account_usage", account_usage_mod)
+    monkeypatch.setitem(sys.modules, "agent.credential_pool", credential_pool_mod)
+    monkeypatch.setattr(providers.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(sys, "argv", ["quota-probe", "openai-codex", ""])
+
+    exec(providers._ACCOUNT_USAGE_SUBPROCESS_CODE, {"__name__": "__main__"})
+
+    output = capsys.readouterr().out.strip()
+    snapshot = json.loads(output)
+
+    assert fetch_calls == [("openai-codex", None, None)]
+    assert snapshot["available"] is False
+    assert snapshot["pool"]["failed_credentials"] == 1
+    assert snapshot["pool"]["credentials"][0]["unavailable_reason"] == "Usage unavailable for this credential."
+    assert "eyJsecret" not in output
+    assert "Bearer" not in output
 
 
 def test_codex_account_usage_subprocess_keeps_legacy_reason_when_pool_misses(monkeypatch, capsys):
@@ -424,6 +576,40 @@ def test_codex_account_usage_subprocess_keeps_legacy_reason_when_pool_misses(mon
     assert snapshot["available"] is False
     assert snapshot["unavailable_reason"] == "Codex account limits are not available for this credential."
     assert snapshot["fetched_at"] == "2030-03-17T12:30:00Z"
+
+
+def test_account_usage_pool_payload_round_trips_to_provider_quota_status():
+    """Parent process serialization must preserve pooled credential summaries."""
+    import api.providers as providers
+
+    payload = {
+        "provider": "openai-codex",
+        "source": "usage_api_pool",
+        "title": "Account limits",
+        "plan": None,
+        "windows": [
+            {"label": "Session", "used_percent": 25, "reset_at": "2030-03-17T17:30:00Z", "detail": "Best of 2"},
+        ],
+        "details": ["2/3 credentials available"],
+        "available": True,
+        "unavailable_reason": None,
+        "fetched_at": "2030-03-17T12:30:00Z",
+        "pool": {
+            "total_credentials": 3,
+            "available_credentials": 2,
+            "exhausted_credentials": 1,
+            "failed_credentials": 0,
+            "credentials": [
+                {"label": "Credential 1", "status": "available", "windows": []},
+            ],
+        },
+    }
+
+    snapshot = providers._account_usage_payload_to_snapshot(payload)
+    serialized = providers._serialize_account_usage_snapshot(snapshot)
+
+    assert serialized["windows"][0]["remaining_percent"] == 75.0
+    assert serialized["pool"] == payload["pool"]
 
 
 def test_anthropic_oauth_usage_unavailable_reason_is_reported(monkeypatch, tmp_path):
@@ -486,6 +672,71 @@ def test_account_usage_profile_env_is_child_scoped(monkeypatch, tmp_path):
     assert os.environ["ANTHROPIC_API_KEY"] == "process-key"
 
 
+def test_account_usage_profile_fetch_uses_short_lived_cache(monkeypatch, tmp_path):
+    """Repeated Settings refreshes should not re-query pooled account usage immediately."""
+    import api.providers as providers
+
+    monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: tmp_path)
+    old_cfg, old_mtime = _with_config(model={"provider": "openai-codex"})
+    providers._account_usage_status_cache.clear()
+    calls = []
+    snapshot = SimpleNamespace(
+        provider="openai-codex",
+        source="usage_api_pool",
+        title="Account limits",
+        plan=None,
+        windows=(),
+        details=(),
+        available=True,
+        unavailable_reason=None,
+        fetched_at=datetime(2030, 3, 17, 12, 30, tzinfo=timezone.utc),
+        pool={"total_credentials": 1, "credentials": []},
+    )
+
+    def fake_fetch(provider, home, api_key=None):
+        calls.append((provider, str(home), api_key))
+        return snapshot
+
+    monkeypatch.setattr(providers, "_agent_fetch_account_usage_for_home", fake_fetch)
+    try:
+        first = providers._fetch_account_usage_with_profile_context("openai-codex")
+        second = providers._fetch_account_usage_with_profile_context("openai-codex")
+    finally:
+        providers._account_usage_status_cache.clear()
+        _restore_config(old_cfg, old_mtime)
+
+    assert first is snapshot
+    assert second is snapshot
+    assert calls == [("openai-codex", str(tmp_path), None)]
+
+
+
+def test_account_usage_profile_fetch_caches_none_results(monkeypatch, tmp_path):
+    """Known-empty/unavailable account usage should be cached, not re-probed each refresh."""
+    import api.providers as providers
+
+    monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: tmp_path)
+    old_cfg, old_mtime = _with_config(model={"provider": "openai-codex"})
+    providers._account_usage_status_cache.clear()
+    calls = []
+
+    def fake_fetch(provider, home, api_key=None):
+        calls.append((provider, str(home), api_key))
+        return None
+
+    monkeypatch.setattr(providers, "_agent_fetch_account_usage_for_home", fake_fetch)
+    try:
+        first = providers._fetch_account_usage_with_profile_context("openai-codex")
+        second = providers._fetch_account_usage_with_profile_context("openai-codex")
+    finally:
+        providers._account_usage_status_cache.clear()
+        _restore_config(old_cfg, old_mtime)
+
+    assert first is None
+    assert second is None
+    assert calls == [("openai-codex", str(tmp_path), None)]
+
+
 def test_account_usage_profile_fetches_can_overlap_for_different_homes(monkeypatch, tmp_path):
     """Different profile quota fetches should not serialize on cron's global lock."""
     import api.providers as providers
@@ -531,6 +782,81 @@ def test_account_usage_profile_fetches_can_overlap_for_different_homes(monkeypat
     assert [kind for kind, _home in events[:2]] == ["enter", "enter"]
 
 
+def test_openai_api_key_detection_ignores_codex_oauth_jwt(monkeypatch, tmp_path):
+    """A Codex OAuth JWT in OPENAI_API_KEY should not show a bare OpenAI card."""
+    monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: tmp_path)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    def b64url(payload: bytes) -> str:
+        return base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
+
+    codex_token = ".".join((
+        b64url(b'{"alg":"none","typ":"JWT"}'),
+        b64url(json.dumps({
+            "https://api.openai.com/auth": {"chatgpt_account_id": "acct-codex"},
+        }).encode("utf-8")),
+        b64url(b"signature"),
+    ))
+    (tmp_path / ".env").write_text(f"OPENAI_API_KEY={codex_token}\n", encoding="utf-8")
+    old_cfg, old_mtime = _with_config(model={"provider": "openai"})
+
+    import api.providers as providers
+    try:
+        assert providers._provider_has_key("openai") is False
+        assert providers._get_provider_api_key("openai") is None
+        provider_ids = [p["id"] for p in providers.get_providers()["providers"]]
+    finally:
+        _restore_config(old_cfg, old_mtime)
+
+    assert "openai" not in provider_ids
+    assert "openai-codex" in provider_ids
+    assert codex_token not in repr(provider_ids)
+
+
+def test_openai_api_key_detection_still_accepts_real_api_keys(monkeypatch, tmp_path):
+    """Filtering Codex OAuth tokens must not hide real OpenAI API keys."""
+    monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: tmp_path)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-test-real-openai-key\n", encoding="utf-8")
+    old_cfg, old_mtime = _with_config(model={"provider": "openai"})
+
+    import api.providers as providers
+    try:
+        assert providers._provider_has_key("openai") is True
+        assert providers._get_provider_api_key("openai") == "sk-test-real-openai-key"
+    finally:
+        _restore_config(old_cfg, old_mtime)
+
+
+
+def test_openai_api_key_detection_falls_through_after_codex_jwt_config_value(monkeypatch, tmp_path):
+    """A filtered OpenAI config value should not mask a later real API key source."""
+    monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: tmp_path)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    def b64url(payload: bytes) -> str:
+        return base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
+
+    codex_token = ".".join((
+        b64url(b'{"alg":"none","typ":"JWT"}'),
+        b64url(json.dumps({
+            "https://api.openai.com/auth": {"chatgpt_account_id": "acct-codex"},
+        }).encode("utf-8")),
+        b64url(b"signature"),
+    ))
+    old_cfg, old_mtime = _with_config(
+        model={"provider": "openai", "api_key": codex_token},
+        providers={"openai": {"api_key": "sk-config-openai-key"}},
+    )
+
+    import api.providers as providers
+    try:
+        assert providers._provider_has_key("openai") is True
+        assert providers._get_provider_api_key("openai") == "sk-config-openai-key"
+    finally:
+        _restore_config(old_cfg, old_mtime)
+
+
 def test_provider_quota_route_is_registered():
     """The backend must expose a route for the UI to poll quota status."""
     routes = (ROOT / "api" / "routes.py").read_text(encoding="utf-8")
@@ -549,6 +875,14 @@ def test_provider_quota_card_is_rendered_in_providers_panel():
     assert "account_limits" in panels
     assert "remaining_percent" in panels
     assert "provider-quota-details" in panels
+    assert "Credential pool" in panels
+    assert "provider-quota-pool-row" in panels
+    assert "_buildProviderQuotaPoolBreakdown" in panels
+    assert "_providerQuotaPoolShouldDefaultOpen" in panels
+    assert "hermes-provider-quota-pool-open" in panels
+    assert "count>0&&count<=3" in panels
+    assert "status.status==='available'||accountLimits.pool" in panels
+    assert "provider-quota-window-detail" in panels
     assert "5-hour limit" in panels
 
 
@@ -581,6 +915,10 @@ def test_provider_quota_styles_exist():
         ".provider-quota-actions",
         ".provider-quota-refresh",
         ".provider-quota-checked",
+        ".provider-quota-pool",
+        ".provider-quota-pool-row",
+        ".provider-quota-pool-window",
+        ".provider-quota-window-detail",
     ):
         assert token in css
 
