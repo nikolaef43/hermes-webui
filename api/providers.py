@@ -388,6 +388,17 @@ def _entry_is_pool_exhausted(entry):
     return str(_entry_value(entry, "last_status") or "").strip().lower() == "exhausted"
 
 
+def _entry_pool_exhausted_reason(entry):
+    code = _entry_value(entry, "last_error_code")
+    reset_at = _iso(_parse_dt(getattr(entry, "last_error_reset_at", None)))
+    reason = "Credential pool marked this credential exhausted"
+    if code:
+        reason += " after provider status " + code
+    if reset_at:
+        reason += "; retry after " + reset_at
+    return reason + "."
+
+
 def _fetch_codex_entry_snapshot(entry):
     access_token = _entry_value(entry, "runtime_api_key", "access_token")
     if not access_token:
@@ -511,6 +522,17 @@ def _fetch_codex_account_usage_from_pool():
         for index, entry in enumerate(entries, start=1):
             label = _safe_entry_label(entry, index)
             pool_exhausted = _entry_is_pool_exhausted(entry)
+            if pool_exhausted:
+                rows.append({
+                    "label": label,
+                    "status": "exhausted",
+                    "plan": None,
+                    "windows": [],
+                    "details": [],
+                    "unavailable_reason": _entry_pool_exhausted_reason(entry),
+                    "fetched_at": None,
+                })
+                continue
             try:
                 snapshot, did_query, reason = _fetch_codex_entry_snapshot(entry)
                 if did_query:
@@ -521,7 +543,7 @@ def _fetch_codex_account_usage_from_pool():
             windows = _snapshot_windows_payload(snapshot) if snapshot is not None else []
             details = _snapshot_details_payload(snapshot) if snapshot is not None else []
             snapshot_available = _snapshot_available(snapshot)
-            status = "available" if snapshot_available and not pool_exhausted else "exhausted" if pool_exhausted else "unavailable"
+            status = "available" if snapshot_available else "unavailable"
             rows.append({
                 "label": label,
                 "status": status,

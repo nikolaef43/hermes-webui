@@ -373,25 +373,23 @@ def test_codex_account_usage_subprocess_reports_read_only_credential_pool(monkey
     assert entries_called == [True]
     assert [call["url"] for call in seen] == [
         "https://chatgpt.com/backend-api/wham/usage",
-        "https://chatgpt.com/backend-api/wham/usage",
     ]
-    assert [call["timeout"] for call in seen] == [4.0, 4.0]
+    assert [call["timeout"] for call in seen] == [4.0]
     assert seen[0]["headers"]["authorization"] == f"Bearer {primary_token}"
     assert seen[0]["headers"]["chatgpt-account-id"] == "acct-primary"
-    assert seen[1]["headers"]["chatgpt-account-id"] == "acct-exhausted"
     assert snapshot["provider"] == "openai-codex"
     assert snapshot["source"] == "usage_api_pool"
     assert snapshot["windows"][0]["label"] == "Session"
     assert snapshot["windows"][0]["used_percent"] == 15
-    assert snapshot["details"] == ["1/2 credentials available", "1 exhausted", "Plans: Pro, Plus"]
+    assert snapshot["details"] == ["1/2 credentials available", "1 exhausted", "Plans: Pro"]
     assert snapshot["available"] is True
     assert snapshot["pool"] == {
         "total_credentials": 2,
-        "queried_credentials": 2,
+        "queried_credentials": 1,
         "available_credentials": 1,
         "exhausted_credentials": 1,
         "failed_credentials": 0,
-        "plans": ["Pro", "Plus"],
+        "plans": ["Pro"],
         "next_reset_at": "2030-03-17T17:46:40Z",
         "best_remaining_by_window": [
             {
@@ -439,26 +437,11 @@ def test_codex_account_usage_subprocess_reports_read_only_credential_pool(monkey
             {
                 "label": "Plus backup",
                 "status": "exhausted",
-                "plan": "Plus",
-                "windows": [
-                    {
-                        "label": "Session",
-                        "used_percent": 95.0,
-                        "remaining_percent": 5.0,
-                        "reset_at": "2030-03-17T17:46:40Z",
-                        "detail": None,
-                    },
-                    {
-                        "label": "Weekly",
-                        "used_percent": 40.0,
-                        "remaining_percent": 60.0,
-                        "reset_at": "2030-03-24T12:30:00Z",
-                        "detail": None,
-                    },
-                ],
-                "details": ["Credits balance: $12.50"],
-                "unavailable_reason": None,
-                "fetched_at": snapshot["pool"]["credentials"][1]["fetched_at"],
+                "plan": None,
+                "windows": [],
+                "details": [],
+                "unavailable_reason": "Credential pool marked this credential exhausted.",
+                "fetched_at": None,
             },
         ],
     }
