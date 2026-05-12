@@ -34,6 +34,13 @@ import sqlite3
 import threading
 from pathlib import Path
 
+from api.turn_journal import (
+    derive_turn_journal_states,
+    is_terminal_turn_event,
+    iter_turn_journal_session_ids,
+    read_turn_journal,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -177,7 +184,12 @@ def _orphaned_backup_live_paths(
     return paths
 
 
-def _read_state_db_missing_sidecar_rows(session_dir: Path, state_db_path: Path | None) -> list[dict]:
+def _read_state_db_missing_sidecar_rows(
+    session_dir: Path,
+    state_db_path: Path | None,
+    *,
+    include_empty: bool = False,
+) -> list[dict]:
     """Return WebUI-origin state.db rows whose JSON sidecar is missing."""
     if state_db_path is None or not state_db_path.exists():
         return []
@@ -229,9 +241,10 @@ def _read_state_db_missing_sidecar_rows(session_dir: Path, state_db_path: Path |
                         if msg['timestamp'] is not None:
                             message['timestamp'] = msg['timestamp']
                         message_rows.append(message)
-                if not message_rows:
+                if not message_rows and not include_empty:
                     continue
                 data['messages'] = message_rows
+                data['_state_db_empty_messages'] = not message_rows
                 rows.append(data)
             return rows
     except Exception as exc:
@@ -323,6 +336,7 @@ def recover_missing_sidecars_from_state_db(session_dir: Path, state_db_path: Pat
         # Session.save() convention).
         tmp_suffix = f".json.reconcile.tmp.{os.getpid()}.{threading.current_thread().ident}"
         tmp = target.with_suffix(tmp_suffix)
+        detail_recorded = False
         try:
             tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
         except OSError as exc:
@@ -345,6 +359,7 @@ def recover_missing_sidecars_from_state_db(session_dir: Path, state_db_path: Pat
             pass
         except OSError as exc:
             details.append({'session_id': sid, 'materialized': False, 'error': str(exc)})
+            detail_recorded = True
         finally:
             try:
                 tmp.unlink(missing_ok=True)
@@ -353,7 +368,7 @@ def recover_missing_sidecars_from_state_db(session_dir: Path, state_db_path: Pat
         if materialized_now:
             materialized += 1
             details.append({'session_id': sid, 'materialized': True, 'messages': len(payload.get('messages') or [])})
-        elif not any(d.get('session_id') == sid for d in details[-1:]):
+        elif not detail_recorded:
             details.append({'session_id': sid, 'materialized': False, 'skipped': 'sidecar_appeared_during_reconcile'})
     return {'scanned': len(rows), 'materialized': materialized, 'details': details}
 
@@ -365,8 +380,9 @@ def _new_audit_item(
     recommendation: str,
     live_messages: int = -1,
     bak_messages: int = -1,
+    **extra,
 ) -> dict:
-    return {
+    item = {
         "session_id": session_id,
         "kind": kind,
         "category": category,
@@ -374,6 +390,8 @@ def _new_audit_item(
         "live_messages": live_messages,
         "bak_messages": bak_messages,
     }
+    item.update(extra)
+    return item
 
 
 def _read_index_session_ids(index_path: Path) -> set[str]:
@@ -458,8 +476,18 @@ def audit_session_recovery(session_dir: Path, state_db_path: Path | None = None)
                 _msg_count(session_dir / f"{session_id}.json"), -1,
             ))
 
-    for row in _read_state_db_missing_sidecar_rows(session_dir, state_db_path):
+    for row in _read_state_db_missing_sidecar_rows(session_dir, state_db_path, include_empty=True):
         sid = str(row.get('id') or '')
+        if row.get('_state_db_empty_messages'):
+            items.append(_new_audit_item(
+                sid,
+                "state_db_orphan_webui_row",
+                "unsafe_to_repair",
+                "manual_review",
+                -1,
+                -1,
+            ))
+            continue
         items.append(_new_audit_item(
             sid,
             "state_db_missing_sidecar",
@@ -468,6 +496,37 @@ def audit_session_recovery(session_dir: Path, state_db_path: Path | None = None)
             -1,
             -1,
         ))
+
+    for session_id in iter_turn_journal_session_ids(session_dir):
+        journal = read_turn_journal(session_id, session_dir=session_dir)
+        states = derive_turn_journal_states(journal.get('events') or [])
+        live_path = session_dir / f"{session_id}.json"
+        live_messages = _msg_count(live_path)
+        existing_user_messages: set[str] = set()
+        try:
+            payload = json.loads(live_path.read_text(encoding='utf-8'))
+            if isinstance(payload, dict):
+                for message in payload.get('messages') or []:
+                    if isinstance(message, dict) and message.get('role') == 'user':
+                        existing_user_messages.add(str(message.get('content') or '').strip())
+        except (OSError, json.JSONDecodeError, ValueError):
+            pass
+        for turn_id, event in sorted(states.items()):
+            if is_terminal_turn_event(event):
+                continue
+            content = str(event.get('content') or '').strip()
+            if not content or content in existing_user_messages:
+                continue
+            items.append(_new_audit_item(
+                session_id,
+                "turn_journal_pending_turn",
+                "repairable",
+                "audit_only_pending_turn_journal",
+                live_messages,
+                -1,
+                turn_id=turn_id,
+                event=str(event.get('event') or ''),
+            ))
 
     summary = {"ok": len(live_paths), "repairable": 0, "unsafe_to_repair": 0}
     for item in items:
@@ -506,8 +565,10 @@ def repair_safe_session_recovery(session_dir: Path, state_db_path: Path | None =
     after = audit_session_recovery(session_dir, state_db_path=state_db_path)
     unsafe_remaining = int((after.get("summary") or {}).get("unsafe_to_repair") or 0)
     repairable_remaining = int((after.get("summary") or {}).get("repairable") or 0)
+    clean = unsafe_remaining == 0 and repairable_remaining == 0
     return {
-        "ok": unsafe_remaining == 0 and repairable_remaining == 0,
+        "clean": clean,
+        "ok": clean,
         "repaired": int(backup_repair.get("restored") or 0) + int(sidecar_repair.get("materialized") or 0),
         "before": before,
         "backup_repair": backup_repair,

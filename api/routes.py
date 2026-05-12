@@ -28,6 +28,7 @@ from api.agent_sessions import (
     is_cli_session_row_visible,
     read_session_lineage_report,
 )
+from api.compression_anchor import visible_messages_for_anchor
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,34 @@ def _active_skill_search_dirs(skills_dir: Path) -> list[Path]:
     except Exception:
         pass
     return [p for p in dirs if p.exists()]
+
+
+def _worktree_retained_payload(session) -> dict:
+    """Return explicit no-cleanup metadata for worktree-backed session actions."""
+    worktree_path = getattr(session, "worktree_path", None) if session else None
+    if not worktree_path:
+        return {}
+    payload = {
+        "worktree_retained": True,
+        "worktree_path": worktree_path,
+    }
+    worktree_branch = getattr(session, "worktree_branch", None)
+    worktree_repo_root = getattr(session, "worktree_repo_root", None)
+    if worktree_branch:
+        payload["worktree_branch"] = worktree_branch
+    if worktree_repo_root:
+        payload["worktree_repo_root"] = worktree_repo_root
+    return payload
+
+
+def _worktree_retained_payload_for_session_id(sid: str) -> dict:
+    try:
+        return _worktree_retained_payload(get_session(sid, metadata_only=True))
+    except KeyError:
+        return {}
+    except Exception:
+        logger.debug("Failed to read worktree metadata for deleted session %s", sid)
+        return {}
 
 
 def _skills_list_from_dir(skills_dir: Path, category: str | None = None) -> dict:
@@ -459,14 +488,19 @@ def _cron_output_content_window(text: str, limit: int = _CRON_OUTPUT_CONTENT_LIM
 
 
 def _cron_job_for_api(job: dict) -> dict:
-    """Return a cron job payload with the #617 optional profile field present.
+    """Return a cron job payload with optional UI settings normalized.
 
     Legacy jobs intentionally persist without ``profile`` so they keep the
     scheduler's server-default behavior. The API still returns ``profile: None``
     so the UI can label that state explicitly instead of guessing.
+
+    ``toast_notifications`` is a WebUI preference for completion toasts. Legacy
+    jobs default to enabled so existing behavior is preserved unless a job is
+    explicitly muted.
     """
     payload = dict(job or {})
     payload.setdefault("profile", None)
+    payload["toast_notifications"] = payload.get("toast_notifications") is not False
     return payload
 
 
@@ -1938,6 +1972,15 @@ _LOGIN_LOCALE = {
     # Strings mirror static/i18n.js login_* keys for the corresponding locale.
     # See issue #1442. When adding a new locale to LOCALES in i18n.js, also add
     # the matching entry here — tests/test_login_locale_parity.py enforces this.
+    "it": {
+        "lang": "it-IT",
+        "title": "Accedi",
+        "subtitle": "Inserisci la password per continuare",
+        "placeholder": "Password",
+        "btn": "Accedi",
+        "invalid_pw": "Password non valida",
+        "conn_failed": "Connessione fallita",
+    },
     "ja": {
         "lang": "ja-JP",
         "title": "\u30b5\u30a4\u30f3\u30a4\u30f3",
@@ -3823,7 +3866,7 @@ def handle_post(handler, parsed) -> bool:
     if parsed.path == "/api/session/recovery/repair-safe":
         from api.session_recovery import repair_safe_session_recovery
         result = repair_safe_session_recovery(SESSION_DIR, state_db_path=_active_state_db_path())
-        return j(handler, result, status=200 if result.get("ok") else 409)
+        return j(handler, result, status=200 if result.get("clean") else 409)
 
     if parsed.path.startswith("/api/kanban/"):
         from api.kanban_bridge import handle_kanban_post
@@ -4204,6 +4247,7 @@ def handle_post(handler, parsed) -> bool:
         if cli_meta_for_delete.get("read_only"):
             return bad(handler, "Read-only imported sessions cannot be deleted from WebUI", 400)
         is_messaging_session = _is_messaging_session_id(sid)
+        worktree_retained = _worktree_retained_payload_for_session_id(sid)
         # Delete from WebUI session store
         with LOCK:
             SESSIONS.pop(sid, None)
@@ -4242,7 +4286,7 @@ def handle_post(handler, parsed) -> bool:
                 delete_cli_session(sid)
             except Exception:
                 logger.debug("Failed to delete CLI session %s", sid)
-        return j(handler, {"ok": True})
+        return j(handler, {"ok": True, **worktree_retained})
 
     if parsed.path == "/api/session/clear":
         try:
@@ -4537,6 +4581,22 @@ def handle_post(handler, parsed) -> bool:
     # ── Clarify (POST) ──
     if parsed.path == "/api/clarify/respond":
         return _handle_clarify_respond(handler, body)
+
+    # ── Commands (POST) ──
+    if parsed.path == "/api/commands/exec":
+        from api.commands import execute_plugin_command
+
+        command = str(body.get("command", "") or "").strip()
+        if not command:
+            return bad(handler, "command is required")
+        try:
+            return j(handler, {"output": execute_plugin_command(command)})
+        except ValueError as e:
+            return bad(handler, str(e), 400)
+        except KeyError:
+            return bad(handler, "Plugin command not found", 404)
+        except RuntimeError as e:
+            return bad(handler, _sanitize_error(e), 500)
 
     # ── Skills (POST) ──
     if parsed.path == "/api/skills/save":
@@ -4863,7 +4923,7 @@ def handle_post(handler, parsed) -> bool:
         with _get_session_agent_lock(sid):
             s.archived = bool(body.get("archived", True))
             s.save(touch_updated_at=False)
-        return j(handler, {"ok": True, "session": s.compact()})
+        return j(handler, {"ok": True, "session": s.compact(), **_worktree_retained_payload(s)})
 
     # ── Session move to project (POST) ──
     if parsed.path == "/api/session/move":
@@ -5607,7 +5667,7 @@ def _handle_media(handler, parsed):
     - SVG always served as attachment (XSS risk)
     - No path traversal: resolved path must stay within an allowed root
     - Additional roots can be added via MEDIA_ALLOWED_ROOTS env var
-      (colon-separated list of absolute paths)
+      (os.pathsep-separated list of absolute paths; ":" on POSIX, ";" on Windows)
     """
     import os as _os
     from api.auth import is_auth_enabled, parse_cookie, verify_session
@@ -5653,10 +5713,10 @@ def _handle_media(handler, parsed):
         pass
 
     # Also allow additional roots from MEDIA_ALLOWED_ROOTS env var
-    # (colon-separated list of absolute paths, e.g. /home/user/models:/home/user/Pictures)
+    # (os.pathsep-separated list; ":" on POSIX, ";" on Windows).
     extra_roots = _os.environ.get("MEDIA_ALLOWED_ROOTS", "").strip()
     if extra_roots:
-        for root in extra_roots.split(":"):
+        for root in extra_roots.split(_os.pathsep):
             root = root.strip()
             if root:
                 try:
@@ -6346,6 +6406,7 @@ def _handle_cron_recent(handler, parsed):
                         "name": job.get("name", "Unknown"),
                         "status": job.get("last_status", "unknown"),
                         "completed_at": ts,
+                        "toast_notifications": job.get("toast_notifications") is not False,
                     }
                 )
         return j(handler, {"completions": completions, "since": since})
@@ -6675,6 +6736,26 @@ def _start_chat_stream_for_session(
             model_provider=model_provider,
             stream_id=stream_id,
         )
+    diag.stage("turn_journal_submitted") if diag else None
+    journal_event = {}
+    try:
+        from api.turn_journal import append_turn_journal_event
+        journal_event = append_turn_journal_event(
+            s.session_id,
+            {
+                "event": "submitted",
+                "stream_id": stream_id,
+                "role": "user",
+                "content": msg,
+                "attachments": attachments,
+                "workspace": workspace,
+                "model": model,
+                "model_provider": model_provider,
+                "created_at": s.pending_started_at,
+            },
+        )
+    except Exception:
+        logger.warning("Failed to append submitted turn journal event", exc_info=True)
     diag.stage("set_last_workspace") if diag else None
     set_last_workspace(workspace)
     diag.stage("stream_registration") if diag else None
@@ -6696,6 +6777,7 @@ def _start_chat_stream_for_session(
         "stream_id": stream_id,
         "session_id": s.session_id,
         "pending_started_at": s.pending_started_at,
+        "turn_id": journal_event.get("turn_id"),
     }
     if normalized_model:
         response["effective_model"] = model
@@ -7104,6 +7186,7 @@ def _handle_cron_create(handler, body):
         from cron.jobs import create_job, update_job
 
         profile = _normalize_cron_profile_value(body.get("profile"))
+        toast_notifications = body.get("toast_notifications") is not False
         job = create_job(
             prompt=body["prompt"],
             schedule=body["schedule"],
@@ -7112,8 +7195,13 @@ def _handle_cron_create(handler, body):
             skills=body.get("skills") or [],
             model=body.get("model") or None,
         )
+        post_create_updates = {}
         if profile is not None:
-            job = update_job(job["id"], {"profile": profile}) or job
+            post_create_updates["profile"] = profile
+        if not toast_notifications:
+            post_create_updates["toast_notifications"] = False
+        if post_create_updates:
+            job = update_job(job["id"], post_create_updates) or job
         return j(handler, {"ok": True, "job": _cron_job_for_api(job)})
     except Exception as e:
         return j(handler, {"error": str(e)}, status=400)
@@ -7563,51 +7651,6 @@ def _handle_clarify_respond(handler, body):
 
 
 def _handle_session_compress(handler, body):
-    def _visible_messages_for_anchor(messages):
-        out = []
-        for m in messages or []:
-            if not isinstance(m, dict):
-                continue
-            role = m.get("role")
-            if not role or role == "tool":
-                continue
-            content = m.get("content", "")
-            has_attachments = bool(m.get("attachments"))
-            if role == "assistant":
-                tool_calls = m.get("tool_calls")
-                has_tool_calls = isinstance(tool_calls, list) and len(tool_calls) > 0
-                has_tool_use = False
-                has_reasoning = bool(m.get("reasoning"))
-                if isinstance(content, list):
-                    for p in content:
-                        if not isinstance(p, dict):
-                            continue
-                        if p.get("type") == "tool_use":
-                            has_tool_use = True
-                        if p.get("type") in {"thinking", "reasoning"}:
-                            has_reasoning = True
-                    text = "\n".join(
-                        str(p.get("text") or p.get("content") or "")
-                        for p in content
-                        if isinstance(p, dict) and p.get("type") == "text"
-                    ).strip()
-                else:
-                    text = str(content or "").strip()
-                if text or has_attachments or has_tool_calls or has_tool_use or has_reasoning:
-                    out.append(m)
-                continue
-            if isinstance(content, list):
-                text = "\n".join(
-                    str(p.get("text") or p.get("content") or "")
-                    for p in content
-                    if isinstance(p, dict) and p.get("type") == "text"
-                ).strip()
-            else:
-                text = str(content or "").strip()
-            if text or has_attachments:
-                out.append(m)
-        return out
-
     def _anchor_message_key(m):
         if not isinstance(m, dict):
             return None
@@ -7846,7 +7889,7 @@ def _handle_session_compress(handler, body):
             s.pending_user_message = None
             s.pending_attachments = []
             s.pending_started_at = None
-            visible_after = _visible_messages_for_anchor(compressed)
+            visible_after = visible_messages_for_anchor(compressed, auto_compression=False)
             s.compression_anchor_visible_idx = max(0, len(visible_after) - 1) if visible_after else None
             s.compression_anchor_message_key = _anchor_message_key(visible_after[-1]) if visible_after else None
             summary_text = None

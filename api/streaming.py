@@ -33,7 +33,9 @@ from api.config import (
     model_with_provider_context,
 )
 from api.helpers import redact_session_data, _redact_text
+from api.compression_anchor import visible_messages_for_anchor
 from api.metering import meter
+from api.turn_journal import append_turn_journal_event_for_stream
 
 # Global lock for os.environ writes. Per-session locks (_agent_lock) prevent
 # concurrent runs of the SAME session, but two DIFFERENT sessions can still
@@ -875,9 +877,41 @@ def _title_retry_completion_budget(provider: str = '', model: str = '', base_url
 
 
 def _title_retry_status(status: str) -> bool:
+    # Whether to grant a second budget attempt within the same prompt+model
+    # combination.  ``llm_length`` indicates the model would have produced
+    # content with more headroom, so doubling the budget can help.
+    #
+    # ``llm_empty_reasoning`` historically also triggered a retry, but for
+    # reasoning models (Qwen3-thinking, DeepSeek-R1, Kimi-K2, etc.) that
+    # status means the model burned its entire budget on hidden reasoning
+    # tokens and emitted nothing visible.  Doubling the budget in that case
+    # just doubles the GPU/credit cost without changing the outcome — the
+    # next attempt produces the same shape.  We skip the retry for empty-
+    # reasoning statuses and let the title path fall through to the local
+    # fallback summary.  See issue #2083 for the LM Studio + Qwen3 repro.
     return status in {
         'llm_length',
         'llm_length_aux',
+    }
+
+
+def _title_should_skip_remaining_attempts(status: str) -> bool:
+    """Statuses where re-issuing the next prompt against the same model
+    produces the same failing shape (model burned its budget on hidden
+    reasoning, hit a hard provider gate, etc.).
+
+    Short-circuit the prompt-iteration loop so we don't issue a second
+    full-budget LLM call (and twice the GPU/credit burn) only to land in
+    the same fallback path. See issue #2083.
+
+    Add a status here only when retrying the next prompt is provably
+    wasted work (single-call signal already establishes that the next
+    call will return the same shape). Length-truncation WITHOUT
+    reasoning is NOT in the set — that's legitimately recoverable by
+    a larger budget on a different prompt and stays in
+    :func:`_title_retry_status`.
+    """
+    return status in {
         'llm_empty_reasoning',
         'llm_empty_reasoning_aux',
     }
@@ -920,10 +954,16 @@ def _extract_title_response(resp, *, aux: bool = False) -> tuple[str, str]:
             or _safe_text_value(_safe_obj_value(message, 'reasoning_content'))
             or _safe_text_value(_safe_obj_value(message, 'thinking'))
         )
-        if finish_reason == 'length':
-            return '', f'llm_length{suffix}'
+        # When the model emitted reasoning tokens but no visible content, it
+        # burned its budget on hidden thinking — retrying with a larger budget
+        # almost never recovers a useful title (see issue #2083: Qwen3-thinking
+        # via LM Studio loops indefinitely on auto-title generation).  Report
+        # this case distinctly so callers can short-circuit instead of double-
+        # billing the GPU/credit on a near-certain repeat.
         if reasoning:
             return '', f'llm_empty_reasoning{suffix}'
+        if finish_reason == 'length':
+            return '', f'llm_length{suffix}'
         return '', f'llm_empty{suffix}'
     except Exception:
         return '', f'llm_empty{suffix}'
@@ -976,6 +1016,15 @@ def generate_title_raw_via_aux(
             except Exception as e:
                 last_status = 'llm_error_aux'
                 logger.debug("Aux title generation attempt %s failed: %s", idx + 1, e)
+            # If the model just burned its budget on hidden reasoning, retrying
+            # the next prompt against the same model produces the same shape.
+            # Short-circuit to the local fallback path (#2083).
+            if _title_should_skip_remaining_attempts(last_status):
+                logger.debug(
+                    "Aux title generation short-circuiting after %s (reasoning-only response).",
+                    last_status,
+                )
+                break
         return None, last_status
     except Exception as e:
         logger.debug("Aux title generation failed: %s", e)
@@ -1075,6 +1124,15 @@ def generate_title_raw_via_agent(agent, user_text: str, assistant_text: str) -> 
                     getattr(agent, 'model', None),
                     e,
                 )
+            # If the model just burned its budget on hidden reasoning, retrying
+            # the next prompt against the same model produces the same shape.
+            # Short-circuit to the local fallback path (#2083).
+            if _title_should_skip_remaining_attempts(last_status):
+                logger.debug(
+                    "Agent title generation short-circuiting after %s (reasoning-only response).",
+                    last_status,
+                )
+                break
         return None, last_status
     except Exception as e:
         logger.debug("Agent title generation failed: %s", e)
@@ -1606,44 +1664,6 @@ def _compression_anchor_message_key(message):
     return {'role': role, 'ts': ts, 'text': text, 'attachments': attach_count}
 
 
-def _visible_messages_for_compression_anchor(messages):
-    out = []
-    for m in messages or []:
-        if not isinstance(m, dict):
-            continue
-        role = m.get('role')
-        if not role or role == 'tool':
-            continue
-        content = m.get('content', '')
-        has_attachments = bool(m.get('attachments'))
-        has_tool_calls = bool(isinstance(m.get('tool_calls'), list) and m.get('tool_calls'))
-        has_tool_use = False
-        has_reasoning = bool(m.get('reasoning'))
-        if isinstance(content, list):
-            text = '\n'.join(
-                str(p.get('text') or p.get('content') or '')
-                for p in content
-                if isinstance(p, dict)
-                and p.get('type') in {'text', 'input_text', 'output_text'}
-            ).strip()
-            for part in content:
-                if not isinstance(part, dict):
-                    continue
-                if part.get('type') == 'tool_use':
-                    has_tool_use = True
-            if not text:
-                has_reasoning = has_reasoning or any(
-                    isinstance(part, dict)
-                    and part.get('type') in {'thinking', 'reasoning'}
-                    for part in content
-                )
-        else:
-            text = str(content or '').strip()
-        if text or has_attachments or has_tool_calls or has_tool_use or has_reasoning:
-            out.append(m)
-    return out
-
-
 def _compression_summary_from_messages(messages):
     for m in reversed(messages or []):
         if not isinstance(m, dict):
@@ -2053,6 +2073,15 @@ def _run_agent_streaming(
         provider=model_provider,
         ephemeral=bool(ephemeral),
     )
+    if not ephemeral:
+        try:
+            append_turn_journal_event_for_stream(
+                session_id,
+                stream_id,
+                {"event": "worker_started", "created_at": time.time()},
+            )
+        except Exception:
+            logger.debug("Failed to append worker_started turn journal event", exc_info=True)
     s = None
     _rt = {}
     old_cwd = None
@@ -2256,13 +2285,18 @@ def _run_agent_streaming(
         # two concurrent tabs on different profiles don't clobber each other via the
         # process-level active-profile global.  Falls back gracefully.
         try:
-            from api.profiles import get_hermes_home_for_profile, get_profile_runtime_env
+            from api.profiles import (
+                _patch_skill_home_modules,
+                get_hermes_home_for_profile,
+                get_profile_runtime_env,
+            )
             _profile_home_path = get_hermes_home_for_profile(getattr(s, 'profile', None))
             _profile_home = str(_profile_home_path)
             _profile_runtime_env = get_profile_runtime_env(_profile_home_path)
         except ImportError:
             _profile_home = os.environ.get('HERMES_HOME', '')
             _profile_runtime_env = {}
+            _patch_skill_home_modules = None
         
         # Capture the resolved profile name now, while profile context is
         # reliable. Used in the compression migration block to stamp s.profile
@@ -2315,23 +2349,8 @@ def _run_agent_streaming(
                 # above, so we only do lightweight sys.modules lookups and
                 # attribute assignments here — no first-time import under
                 # the lock (#2024).
-                from pathlib import Path as _P
-                import sys as _sys
-                _ph = _P(_profile_home)
-                _sk = _sys.modules.get('tools.skills_tool')
-                if _sk is not None:
-                    try:
-                        _sk.HERMES_HOME = _ph
-                        _sk.SKILLS_DIR = _ph / 'skills'
-                    except AttributeError:
-                        pass
-                _sm = _sys.modules.get('tools.skill_manager_tool')
-                if _sm is not None:
-                    try:
-                        _sm.HERMES_HOME = _ph
-                        _sm.SKILLS_DIR = _ph / 'skills'
-                    except AttributeError:
-                        pass
+                if _patch_skill_home_modules is not None:
+                    _patch_skill_home_modules(Path(_profile_home))
         # Lock released — agent runs without holding it
         # ── MCP Server Discovery (lazy import, idempotent) ──
         # MUST run AFTER the HERMES_HOME mutation above — `discover_mcp_tools()`
@@ -3370,7 +3389,7 @@ def _run_agent_streaming(
                         _compressed = True
                 # Notify the frontend that compression happened
                 if _compressed:
-                    visible_after = _visible_messages_for_compression_anchor(s.messages)
+                    visible_after = visible_messages_for_anchor(s.messages, auto_compression=True)
                     s.compression_anchor_visible_idx = (
                         max(0, len(visible_after) - 1) if visible_after else None
                     )
@@ -3559,7 +3578,44 @@ def _run_agent_streaming(
                         # Older hermes-agent builds may not expose this helper.
                         # Better to leave context_length=0 than crash the save.
                         pass
+                if not ephemeral and s.messages:
+                    _latest_assistant_idx = next(
+                        (idx for idx in range(len(s.messages) - 1, -1, -1)
+                         if isinstance(s.messages[idx], dict) and s.messages[idx].get('role') == 'assistant'),
+                        None,
+                    )
+                    if _latest_assistant_idx is not None:
+                        _latest_assistant = s.messages[_latest_assistant_idx]
+                        try:
+                            append_turn_journal_event_for_stream(
+                                s.session_id,
+                                stream_id,
+                                {
+                                    "event": "assistant_started",
+                                    "created_at": float(_latest_assistant.get('timestamp') or time.time()),
+                                    "assistant_message_index": _latest_assistant_idx,
+                                },
+                            )
+                        except Exception:
+                            logger.debug("Failed to append assistant_started turn journal event", exc_info=True)
                 s.save()
+                if not ephemeral:
+                    try:
+                        append_turn_journal_event_for_stream(
+                            s.session_id,
+                            stream_id,
+                            {
+                                "event": "completed",
+                                "created_at": time.time(),
+                                "assistant_message_index": next(
+                                    (idx for idx in range(len(s.messages) - 1, -1, -1)
+                                     if isinstance(s.messages[idx], dict) and s.messages[idx].get('role') == 'assistant'),
+                                    None,
+                                ),
+                            },
+                        )
+                    except Exception:
+                        logger.debug("Failed to append completed turn journal event", exc_info=True)
             # Sync to state.db for /insights (opt-in setting)
             try:
                 from api.config import load_settings as _load_settings
@@ -3929,6 +3985,19 @@ def _run_agent_streaming(
                     s.save()
                 except Exception:
                     pass
+                if not ephemeral:
+                    try:
+                        append_turn_journal_event_for_stream(
+                            s.session_id,
+                            stream_id,
+                            {
+                                "event": "interrupted",
+                                "created_at": time.time(),
+                                "reason": _exc_type,
+                            },
+                        )
+                    except Exception:
+                        logger.debug("Failed to append interrupted turn journal event", exc_info=True)
         put('apperror', _error_payload)
     finally:
         # Stop the periodic checkpoint thread before the final recovery path.

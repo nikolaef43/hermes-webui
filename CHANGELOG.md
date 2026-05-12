@@ -2,6 +2,106 @@
 
 ## [Unreleased]
 
+### Added
+
+- **PR #2105** by @Michaelyklam — Hermes run adapter contract RFC at `docs/rfcs/hermes-run-adapter-contract.md` (refs #1925). 315-line spec/gap matrix that defines the event/control compatibility contract WebUI needs before browser-originated chat turns can be routed to Hermes-owned runtime execution. Documents the ownership boundary (Hermes Agent owns run creation, lifecycle, event ordering, replay, terminal state, approvals, clarify, cancellation; WebUI owns browser auth, transcript rendering, tool cards, approval/clarify widgets, workspace UX), the minimum `start_run`/`observe_run`/`get_run`/`cancel_run`/`queue_or_continue`/`respond_approval`/`respond_clarify` IPC surface, and a gap matrix mapping current `STREAMS`/`CANCEL_FLAGS`/`AGENT_INSTANCES`/callback queues to Hermes-owned targets with explicit "no private callback queue" / "no runtime surrogate" non-goals. First success criterion is restart/reattach (start a non-trivial run, restart hermes-webui, browser reconnects, replays from last cursor, cancels with Hermes-emitted terminal state) — not "basic chat streamed once." Status: Proposed.
+
+### Fixed
+
+- **PR #2107** (self-built, closes #2083) — Title-generation budget-doubling retry loop on reasoning-only model responses. Reporter @darkopetrovic on LM Studio with Qwen3.6-35B-A3B (and the broader class: DeepSeek-R1, Kimi-K2, other Qwen3-thinking variants) saw GPU never going idle after each prompt — the chat turn finished cleanly but the auto-title generation request burned its 500-token budget on hidden `reasoning_content`, emitted `content=""` with `finish_reason=length`, got classified as `llm_length`, retried at 1024 tokens, returned the same shape, then iterated through `_title_prompts()`'s two prompts for ~3000 reasoning tokens per new chat. The agent-side `is_lmstudio` classifier in `run_agent.py:9468` misses `custom:` providers pointing at LM Studio, so the `reasoning_effort: "none"` adapter never fires for that route. WebUI-side belt-and-braces fix: (1) `_extract_title_response()` reorders the empty-response classification to check `reasoning_content` first regardless of `finish_reason` — reasoning presence is the diagnostic signal, not finish_reason; (2) `_title_retry_status()` drops `llm_empty_reasoning{,_aux}` from the retry set (length-without-reasoning still retries — legitimate budget-truncation case); (3) new `_title_should_skip_remaining_attempts()` short-circuits the prompt-iteration loop, both aux and agent routes break to `_fallback_title_from_exchange` for a local-summary title. Net: 4 calls → 1 call per chat. `tests/test_title_aux_routing.py` inverts the old reasoning-retry assertions and adds two new tests for the legitimate length-without-reasoning retry path. nesquena APPROVED with 200-line end-to-end trace + behavioral harness confirming the 4→1 call reduction.
+
+- **PR #2064** by @franksong2702 — Worktree session archive/delete confirm copy now reassures users that the underlying worktree directory remains on disk (refs #2057). Pre-fix the confirm dialogs said only "Delete this conversation?" / "Archive this conversation?" without clarifying that worktree-backed conversations preserve the worktree files even when the conversation row is removed — users were reasonably afraid of losing local work. Adds an explicit `worktree_retained` boolean on the `/api/session` payload that the frontend reads to surface "The worktree at /path will remain on disk." (single) and "N worktree-backed conversation(s) will keep their worktree directories on disk." (bulk) variants in both archive and delete dialogs. 81-line i18n update across all 9 locales (en/it/ja/ru/es/de/zh/pt/ko) with an English-bundle locale-leak fix caught during screenshot capture (several worktree strings had landed under Russian in error). Regression coverage in `tests/test_issue2057_worktree_lifecycle.py` + `tests/test_issue2057_worktree_ui_static.py`. UX-gate cleared with 5 viewports (4×1280px desktop covering single + bulk archive/delete confirms, 1×390px mobile of single-delete confirming dialog fits without overflow).
+
+### Stage-341 maintainer fixes
+
+- **`docs/rfcs/README.md`** — Added a single bullet to the conventions block clarifying that RFCs are design directions, not invitations to file implementation PRs against fragments. Implementation slices need maintainer confirmation in the tracking issue first. Applied alongside PR #2105 to head off the speculative-fragment pattern we just had to put on hold with PR #2071 (well-written 651-LOC collector with no callers). ~6 LOC.
+
+- **`static/i18n.js:it` block** — Opus SHOULD-FIX from stage-341 review: PR #2064 was branched before stage-340 landed the `it` locale (#2067), so the 9 new `session_*worktree*` keys were missing for Italian users. Mechanical add inside the `it:` block at the parallel position to en/ja. Falls back to English silently without this fix; with this fix, Italian users see the worktree-retention reassurance copy in their locale. Parallels the stage-340 `cron_toast_notifications_*` fix exactly. ~9 LOC.
+
+- **`api/streaming.py` short-circuit observability** — Opus SHOULD-FIX from stage-341 review: PR #2107's new `_title_should_skip_remaining_attempts` short-circuit `break` was silent in both the aux and agent title-generation paths. Added a `logger.debug` call before each `break` so production logs surface why the prompt-iteration loop exited early (nesquena flagged this as non-blocking; landed as polish in the same release). Also expanded the function's docstring to document the membership criterion explicitly so future additions (`llm_safety_blocked`, `llm_oauth_quota`, etc.) have a clear inclusion test. ~16 LOC.
+
+
+## [v0.51.47] — 2026-05-11 — Release W (4-PR contributor batch — per-cron toast toggle + Italian locale + stale-gateway agent-health fix + CI/console hygiene)
+
+### Added
+
+- **PR #2100** by @ai-ag2026 — Per-cron toast notification toggle. New `toast_notifications` boolean on cron job payloads (default-true for legacy preservation) wired through `_renderCronForm`, `_renderCronDetail`, `openCronCreate`, `openCronEdit`, `duplicateCurrentCron`, and `saveCronForm`. The polling loop in `startCronPolling()` gates `showToast(...)` on `c.toast_notifications !== false` so muted jobs still update the Tasks badge and new-run marker but skip the toast. Full i18n parity (9 locales: en/it/ja/ru/es/de/zh/pt/ko after PR #2067 landed) and 158-line regression suite in `tests/test_cron_toast_notifications.py`.
+
+- **PR #2067** by @samuelgudi — Italian (`it`) locale. ~280 UI strings translated covering boot, messages, MCP, commands, goals, settings, sessions, kanban, panels, and the offline state. Inserted alphabetically (`en → it → ja`) in `static/i18n.js`'s `LOCALES` map and mirrored in the `LOGIN_LOCALES` server-rendered table in `api/routes.py`. Updated `TestComposerVoiceButtonI18n.LOCALES` to include `"it"`; sibling `TestVoiceModePreferenceGate` also gets the tuple so its newly-adaptive `len(self.LOCALES)` count assert resolves.
+
+### Fixed
+
+- **PR #2075** by @LumenYoung — Stale `gateway_state == "running"` runtime status is now reported as `alive: null` (unknown) instead of `alive: false` (refs #1879). In multi-container WebUI+gateway deployments the older gateway builds only refresh `gateway_state.json` on lifecycle changes, not every tick — so a stale `running` file means "WebUI cannot see the gateway" rather than "gateway is down". New `_runtime_status_is_stale_running()` helper sits in front of the existing `_runtime_status_is_stale_stopped()` branch in `build_agent_health_payload()` so the heartbeat banner no longer flips to a confirmed-outage state when the gateway is actually fine but PID-checking across containers is impossible. 52 LOC including the inversion of the matching assertion in `test_issue1879_cross_container_gateway_liveness.py`.
+
+- **PR #2070** by @ai-ag2026 — CI and console-noise hygiene. (1) Quoted `"pyyaml>=6.0"` in `.github/workflows/tests.yml` install step so the shell stops parsing the unquoted `>` as stdout redirection. (2) Registered the `integration` pytest marker in a new `pytest.ini` to suppress collection-time warnings on tests that hit the live test server. (3) Lowered the live-model success diagnostic in `_fetchLiveModels()` from `console.log` to `console.debug` so model-fetch chatter no longer floods the default browser console. New `tests/test_ci_hygiene.py` (29 LOC) pins all three regressions.
+
+### Stage-340 maintainer fixes
+
+- **`tests/test_issue1488_composer_voice_buttons.py:TestVoiceModePreferenceGate`** — Defined `LOCALES = ("en", "it", "ja", "ru", "es", "de", "zh", "zh-Hant", "pt", "ko")` on the class. PR #2067 made `test_settings_pane_has_voice_mode_i18n_keys` count adaptive via `len(self.LOCALES)` but only defined `LOCALES` on the sibling `TestComposerVoiceButtonI18n`, so CI failed with `AttributeError`. Mirroring the tuple is the surgical fix; the alternative (back to a hard-coded `9`) would have rotted next time someone adds a locale. ~2 LOC.
+
+- **`static/i18n.js:it` block** — Opus SHOULD-FIX from stage-340 review: added the four `cron_toast_notifications_*` keys (label, hint, enabled, disabled) inside the `it:` block. PR #2067 inserted the `it` locale between `en` and `ja`; PR #2100 added those keys to the other 8 locales but missed `it`. ~4 LOC, mechanical add immediately after `cron_profile_server_default_hint` to mirror the en/ja position.
+
+## [v0.51.46] — 2026-05-11 — Release V (5-PR contributor batch — CSP report-only + logs panel polish + plugin slash commands + turn-journal crash-safe writer + lifecycle events)
+
+### Added
+
+- **PR #2059** by @ai-ag2026 — Append-only WebUI turn journal helper at `api/turn_journal.py` (new file, ~128 LOC). Writes one JSONL file per session under `_turn_journal/` and fsyncs `submitted`-turn events before the worker thread starts via `/api/chat/start` (after pending session state is saved and before `threading.Thread(...)` starts). `recovery_audit` extended to report non-terminal journal turns as `turn_journal_pending_turn` when the submitted user message is not present in the sidecar. Intentionally the minimal slice from `docs/rfcs/turn-journal.md` (RFC #2042): writer + reader + state derivation + audit-only reporting. No replay or repair yet.
+
+- **PR #2062** by @ai-ag2026 — Turn-journal lifecycle events on top of #2059's submitted-event writer. Records `worker_started` when the streaming worker begins, `assistant_started` before the final session save once an assistant message exists, `completed` after the final save, and `interrupted` on the provider-error path. `append_turn_journal_event_for_stream(...)` reuses the `turn_id` associated with the stream's submitted event. Still audit-only / journaling-only — does not replay turns or repair assistant output. The little WAL goblin remains on a leash.
+
+- **PR #2089** by @plerohellec — Plugin-defined slash commands now surface in the WebUI command picker and execute via a new `/api/commands/exec` route (closes #1935). `list_commands()` in `api/commands.py` merges `hermes_cli.plugins.get_plugin_commands()` into the `/api/commands` payload with `category: "Plugin"`; the frontend intercepts plugin commands in `static/messages.js` and `static/commands.js` to route through the plugin execution endpoint instead of falling through to the agent. Pre-fix the WebUI only learned slash commands from `hermes_cli.commands.COMMAND_REGISTRY` (commands.py:23), so plugin-registered commands were invisible to the picker, autocomplete, and routing — they fell through to the agent as raw text and the agent's response was about an unknown command. This is the WebUI half of the parity fix; the corresponding agent-side plumbing already existed in `hermes_cli/plugins.py:1424` (`get_plugin_commands()`).
+
+### Fixed
+
+- **PR #2085** by @bergeouss — Logs panel: clipboard `_copyText()` fallback + severity filter (closes #2081). Pre-fix `copyLogsAll()` called `navigator.clipboard.writeText()` directly with no fallback — failed silently on large payloads / non-secure contexts / unfocused pages, leaving users with a useless error toast. Now routes through `_copyText()` from `ui.js` which already has a `<textarea>` + `document.execCommand('copy')` fallback. Also adds a Severity dropdown (All / Errors / Warnings+) that filters the in-memory log cache without re-fetching — `errors.log` is ~90% WARNING tool noise so filtering down to ERROR/CRITICAL is a real triage time-saver. `copyLogsAll()` copies the FILTERED subset when a filter is active. 5 new i18n keys in all 9 locales.
+
+- **PR #2084** by @ai-ag2026 — `Content-Security-Policy-Report-Only` header (refs #1909). All WebUI responses now ship a CSP slice in report-only mode — non-enforcing, so the browser collects violations without blocking page behavior. Current UI allowances (`'unsafe-inline'` for scripts and styles, plus `https://cdn.jsdelivr.net` for the Prism/xterm/katex CDN assets that `static/index.html` loads with SRI hashes) are explicit so future tightening passes can replace them one constraint at a time. `object-src 'none'`, `base-uri 'self'`, and `frame-ancestors 'self'` are already enforced because they don't break the current UI. Server-side change only (`server.py` headers), zero client-side risk.
+
+### Stage-339 maintainer review (Opus advisor)
+
+- **`server.py:_CSP_REPORT_ONLY`** — Dropped `'unsafe-eval'` after Opus verified by grepping all production JS that nothing uses `eval()`, `new Function()`, or string-form `setTimeout`/`setInterval`. Keeping the allowance would have been a gratuitous privilege that defeats the purpose of the dry-run. ~1 LOC.
+
+- **`server.py:_CSP_REPORT_ONLY`** — Added `https://cdn.jsdelivr.net` to `script-src` and `style-src`. `static/index.html` loads Prism, xterm.js, and katex CSS from jsdelivr with SRI integrity hashes. Without the allowance, every page load would fire known-good CSP violations and drown out the real dry-run signal. ~2 LOC.
+
+- **`api/commands.py:execute_plugin_command`** — Sanitized the plugin error message. Previously returned `f"Plugin command error: {exc}"` which would leak paths / env / internal state from a `FileNotFoundError('/etc/something/secret.key')`-shape exception verbatim to the user-facing chat. Now returns only `type(exc).__name__`; the full traceback is logged at WARNING via `logger.warning(..., exc_info=exc)`. ~4 LOC.
+
+## [v0.51.45] — 2026-05-11 — Release U (9-PR contributor batch — themes docs + gitignore policy + kanban parity + skill cache patching + fork lineage + sidebar spinner + custom provider slug + session recovery polish + compression anchor refactor)
+
+### Added
+
+- **PR #2074** by @franksong2702 — `_patch_skill_home_modules(home)` centralizes patching of both `tools.skills_tool` and `tools.skill_manager_tool` module-level skill paths so process-wide HERMES_HOME switches and per-request streaming switches stay aligned. Closes #2023. Closes the cleanup gap from the original #2023 fix where the streaming per-request path patched both modules but the process-wide switch path only patched `tools.skills_tool`. Preserves the no-import-under-`_ENV_LOCK` invariant from #2024.
+
+- **PR #2077** by @franksong2702 — Compression anchor visibility helpers collapsed into a single shared module `api/compression_anchor.py` (new file, 77 lines) so the manual `/api/session/compress` path in `api/routes.py` and the streaming auto-compression path in `api/streaming.py` share one canonical implementation. Net effect: 48 lines removed from `routes.py`, 41 from `streaming.py`, plus 59-line regression suite. Closes #2028.
+
+### Fixed
+
+- **PR #2068** by @franksong2702 — Stuck sidebar spinners on completed sessions (closes #2066). `_isSessionLocallyStreaming()` no longer consults `INFLIGHT` for non-active sessions — INFLIGHT entries for non-active sessions are always artifacts and never affect spinner state. Added `_purgeStaleInflightEntries()` cleanup pass and 71-line regression file `tests/test_issue2066_stale_sidebar_spinner.py` covering the abnormal-termination cases (page refresh / network drop / gateway restart) that the symptomatic 5-minute-staleness alternative would have left broken.
+
+- **PR #2056** by @franksong2702 — Custom provider name slugs no longer preserve slug-hostile punctuation (closes #2047). Friendly setup names like `Local (127.0.0.1:15721)` now become `custom:local-127.0.0.1-15721` instead of `custom:local-(127.0.0.1:15721)`. The latter shape collided with the `@provider:model` grammar and could corrupt the model into `15721):deepseek-v4-flash`. Endpoint-derived `custom:<host>:<port>` slugs continue to flow through the host-port parser unchanged. `_custom_provider_slug_from_name()` is now reused by both model resolution and available-model lookup instead of duplicating `lower().replace(" ", "-")`.
+
+- **PR #2065** by @franksong2702 — Four low-severity polish items from the v0.51.42 Opus pre-release review (closes #2050). (1) `state.db` rows with `source='webui'` but zero readable messages now emit `state_db_orphan_webui_row` / `unsafe_to_repair` / `manual_review` instead of being silently dropped. (2) `repair_safe_session_recovery()` returns an explicit `clean` flag preserving `ok` for compatibility; `/api/session/recovery/repair-safe` 200/409 dispatch keys off `clean`, so a 409 now means "audit still has findings" rather than "repair code failed." (3) `MEDIA_ALLOWED_ROOTS` splits on `os.pathsep` (POSIX `:` / Windows `;`) instead of a hard-coded colon. (4) Replaced the confusing `details[-1:]` one-element slice with an explicit local detail-recorded flag.
+
+- **PR #2063** by @dso2ng — Explicit `session_source="fork"` sessions are kept out of `read_session_lineage_report()` continuation chains. The query now fetches optional `session_source` so the existing continuation helper can see fork metadata; pre-fix the backend read-only lineage report bridge added in #2012 contradicted the sidebar collapse logic taught in #2014 (where forks are explicit branches, not compression continuations). Regression covers a fork child whose parent ended via compression.
+
+### Refactored
+
+- **PR #2077** (cross-listed) — see Added.
+
+### Documentation
+
+- **PR #2088** by @michael-dg — `THEMES.md` re-aligned with the post-#627 `Theme × Skin` architecture. The old monolithic palette names (`Dark`, `Light`, `Slate`, `Solarized Dark`, `Monokai`, `Nord`, `OLED`) no longer match the actual two-picker model (Theme `System` / `Dark` / `Light` applied as `.dark` class on `<html>`, plus Skin — 8 named accent palettes — applied as `data-skin="<name>"`). The Settings → Appearance panel exposes both pickers plus Font Size, and `/theme <name>` accepts theme + skin tokens.
+
+- **PR #2073** by @ai-ag2026 — Top-level Markdown docs (`docs/*.md`) are now tracked instead of silently ignored by the broad `docs/*` rule. Arbitrary scratch/reference files under `docs/` (non-`.md`) remain ignored by default. Regression tests cover the intended `git check-ignore` behavior on both paths.
+
+### Tests
+
+- **PR #2076** by @franksong2702 — `test_kanban_locale_parity` (added to `tests/test_kanban_ui_static.py`) catches missing-key regressions across ~86 `kanban_*` i18n keys × 9 locales (en, ja, ru, es, de, zh, zh-Hant, pt, ko). Follows the existing `test_lineage_segment_locale_keys_are_defined_for_sidebar_locales` pattern. Issue #1973 flagged that this regression class was previously caught only by manual review during the Opus pre-ship audit.
+
+### Stage-338 maintainer review (Opus advisor)
+
+- **`api/providers.py:1049`** — Custom provider entries that slugify to an empty string were silently dropped, which made misconfigurations hard to diagnose. `logger.warning()` now surfaces the bad config entry. ~4 LOC; pure observability change.
+
+
 ## [v0.51.44] — 2026-05-11 — Release T (5-PR contributor batch — security + worktree sessions + LM Studio + onboarding docs + transcript dedup, plus comprehensive test-suite network isolation)
 
 ### Added

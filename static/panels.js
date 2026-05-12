@@ -32,6 +32,7 @@ let _profilePreFormDetail = null;
 let _pendingSettingsTargetPanel = null; // destination selected while settings had unsaved changes
 let _logsAutoRefreshTimer = null;
 let _lastLogsLines = [];
+let _logsSeverityFilter = 'all';
 
 // Map of panel names → i18n keys for the app titlebar label.
 const APP_TITLEBAR_KEYS = {
@@ -486,6 +487,7 @@ function _renderCronDetail(job){
           <button type="button" class="cron-btn" onclick="copyCurrentCronDiagnostics()">${esc(t('cron_attention_copy_diagnostics'))}</button>
         </div>
       </div>` : '';
+  const toastNotifications = job.toast_notifications !== false;
   body.innerHTML = `
     <div class="main-view-content">
       ${attentionBanner}
@@ -499,6 +501,7 @@ function _renderCronDetail(job){
         <div class="detail-row"><div class="detail-row-label">Mode</div><div class="detail-row-value"><span class="detail-badge" id="cronJobMode">${esc(cronJobMode)}</span></div></div>
         ${isNoAgent ? `<div class="detail-row"><div class="detail-row-label">No-agent script</div><div class="detail-row-value"><code>${esc(script || '—')}</code></div></div>` : ''}
         <div class="detail-row"><div class="detail-row-label">${esc(t('cron_profile_label') || 'Profile')}</div><div class="detail-row-value"><span class="detail-badge active" title="${esc(profileTitle)}">${esc(profileLabel)}</span></div></div>
+        <div class="detail-row"><div class="detail-row-label">${esc(t('cron_toast_notifications_label') || 'Completion toasts')}</div><div class="detail-row-value"><span class="detail-badge ${toastNotifications ? 'active' : ''}">${esc(toastNotifications ? (t('cron_toast_notifications_enabled') || 'Enabled') : (t('cron_toast_notifications_disabled') || 'Disabled'))}</span></div></div>
         <div class="detail-row"><div class="detail-row-label">Skills</div><div class="detail-row-value">${esc(skills)}</div></div>
         ${lastError}
       </div>
@@ -682,6 +685,7 @@ function duplicateCurrentCron(){
     prompt: job.prompt || '',
     deliver: job.deliver || 'local',
     profile: job.profile || '',
+    toast_notifications: job.toast_notifications !== false,
     isEdit: false,
   });
   if (!_cronSkillsCache) {
@@ -715,7 +719,7 @@ function openCronCreate(){
   _cronMode = 'create';
   _cronIsDuplicate = false;
   _cronSelectedSkills = [];
-  _renderCronForm({ name:'', schedule:'', prompt:'', deliver:'local', profile:'', isEdit:false });
+  _renderCronForm({ name:'', schedule:'', prompt:'', deliver:'local', profile:'', toast_notifications:true, isEdit:false });
   _cronSkillsCache = null;
   api('/api/skills').then(d=>{_cronSkillsCache=d.skills||[]; _bindCronSkillPicker();}).catch(()=>{});
   loadCronProfiles().then(()=>_refreshCronProfileSelect('')).catch(()=>{});
@@ -733,6 +737,7 @@ function openCronEdit(job){
     prompt: job.prompt || '',
     deliver: job.deliver || 'local',
     profile: job.profile || '',
+    toast_notifications: job.toast_notifications !== false,
     no_agent: !!job.no_agent,
     script: job.script || '',
     isEdit: true,
@@ -745,12 +750,13 @@ function openCronEdit(job){
   loadCronProfiles().then(()=>_refreshCronProfileSelect(job.profile || '')).catch(()=>{});
 }
 
-function _renderCronForm({ name, schedule, prompt, deliver, profile, no_agent=false, script='', isEdit }){
+function _renderCronForm({ name, schedule, prompt, deliver, profile, toast_notifications=true, no_agent=false, script='', isEdit }){
   const title = $('taskDetailTitle');
   const body = $('taskDetailBody');
   const empty = $('taskDetailEmpty');
   if (!body || !title) return;
   const isNoAgent = !!no_agent;
+  const toastNotifications = toast_notifications !== false;
   title.textContent = isEdit ? (t('edit') + ' · ' + (name || schedule || t('scheduled_jobs'))) : t('new_job');
   const deliverOpt = (v,l) => `<option value="${v}"${deliver===v?' selected':''}>${esc(l)}</option>`;
   body.innerHTML = `
@@ -786,6 +792,13 @@ function _renderCronForm({ name, schedule, prompt, deliver, profile, no_agent=fa
             ${_cronProfileOptions(profile)}
           </select>
           <div class="detail-form-hint">${esc(t('cron_profile_server_default_hint') || 'Uses the WebUI server default profile at run time')}</div>
+        </div>
+        <div class="detail-form-row">
+          <label for="cronFormToastNotifications">${esc(t('cron_toast_notifications_label') || 'Completion toasts')}</label>
+          <label class="detail-form-check" for="cronFormToastNotifications">
+            <input type="checkbox" id="cronFormToastNotifications" ${toastNotifications ? 'checked' : ''}>
+            <span>${esc(t('cron_toast_notifications_hint') || 'Show a toast when this cron finishes.')}</span>
+          </label>
         </div>
         <div class="detail-form-row">
           <label for="cronFormSkillSearch">${esc(t('cron_skills_label') || 'Skills')}</label>
@@ -878,6 +891,7 @@ async function saveCronForm(){
   const promptEl=$('cronFormPrompt');
   const delivEl=$('cronFormDeliver');
   const profileEl=$('cronFormProfile');
+  const toastEl=$('cronFormToastNotifications');
   const errEl=$('cronFormError');
   if(!schEl||!promptEl||!errEl) return;
   const name=(nameEl?nameEl.value:'').trim();
@@ -885,13 +899,14 @@ async function saveCronForm(){
   const prompt=promptEl.value.trim();
   const deliver=delivEl?delivEl.value:'local';
   const profile=profileEl?profileEl.value:'';
+  const toastNotifications=toastEl?!!toastEl.checked:true;
   const isNoAgent = !!(_cronPreFormDetail && _cronPreFormDetail.no_agent);
   errEl.style.display='none';
   if(!schedule){errEl.textContent=t('cron_schedule_required_example');errEl.style.display='';return;}
   if(!isNoAgent && !prompt){errEl.textContent=t('cron_prompt_required');errEl.style.display='';return;}
   try{
     if (_editingCronId) {
-      const updates = {job_id: _editingCronId, schedule, profile: profile};
+      const updates = {job_id: _editingCronId, schedule, profile: profile, toast_notifications: toastNotifications};
       if (!isNoAgent) updates.prompt = prompt;
       if (name) updates.name = name;
       await api('/api/crons/update', {method:'POST', body: JSON.stringify(updates)});
@@ -904,7 +919,7 @@ async function saveCronForm(){
       if (job) openCronDetail(editedId);
       return;
     }
-    const body={schedule,prompt,deliver,profile: profile};
+    const body={schedule,prompt,deliver,profile: profile, toast_notifications: toastNotifications};
     if(_cronIsDuplicate) body.enabled=false;
     if(name)body.name=name;
     if(_cronSelectedSkills.length)body.skills=_cronSelectedSkills;
@@ -2663,6 +2678,32 @@ function _selectedLogsTail() {
   return [100,200,500,1000].includes(value) ? value : 200;
 }
 
+function _severityForLine(line) {
+  const text = String(line || '').toUpperCase();
+  if (/\b(ERROR|CRITICAL|TRACEBACK)\b/.test(text)) return 'error';
+  if (/\b(WARNING|WARN)\b/.test(text)) return 'warning';
+  if (/\b(DEBUG)\b/.test(text)) return 'debug';
+  if (/\b(INFO)\b/.test(text)) return 'info';
+  return 'other';
+}
+
+function _filteredLogsLines() {
+  if (_logsSeverityFilter === 'all') return _lastLogsLines;
+  return _lastLogsLines.filter(line => {
+    const sev = _severityForLine(line);
+    if (_logsSeverityFilter === 'errors') return sev === 'error';
+    if (_logsSeverityFilter === 'warnings') return sev === 'warning' || sev === 'error';
+    return true;
+  });
+}
+
+function _applyLogsSeverityFilter() {
+  const el = $('logsSeverityFilter');
+  _logsSeverityFilter = (el && el.value) || 'all';
+  // Re-render from cached lines without re-fetching
+  _renderLogs({ lines: _lastLogsLines, hint: '', truncated: false, _fromFilter: true });
+}
+
 function _logLineSeverityClass(line) {
   const text = String(line || '').toUpperCase();
   if (/\b(WARNING|WARN)\b/.test(text)) return 'log-line-warning';
@@ -2710,14 +2751,19 @@ function _renderLogs(data) {
   const box = $('logsOutput');
   const status = $('logsStatus');
   if (!box) return;
-  const lines = Array.isArray(data && data.lines) ? data.lines : [];
-  _lastLogsLines = lines.slice();
+  const rawLines = Array.isArray(data && data.lines) ? data.lines : [];
+  // Only update cache when loading fresh data (not when re-rendering from filter)
+  if (data && !data._fromFilter) _lastLogsLines = rawLines.slice();
+  const displayLines = _filteredLogsLines();
   const hint = data && data.hint ? `<div class="logs-hint">${esc(data.hint)}</div>` : '';
   const truncated = data && data.truncated ? `<div class="logs-hint warn">${esc(t('logs_truncated_hint'))}</div>` : '';
-  if (!lines.length) {
-    box.innerHTML = `${hint}${truncated}<div class="logs-empty">${esc(t('logs_empty'))}</div>`;
+  const filterNote = _logsSeverityFilter !== 'all'
+    ? `<div class="logs-hint">${esc(displayLines.length + ' / ' + _lastLogsLines.length + ' ' + t('logs_filter_active'))}</div>`
+    : '';
+  if (!displayLines.length) {
+    box.innerHTML = `${hint}${truncated}${filterNote}<div class="logs-empty">${esc(t('logs_empty'))}</div>`;
   } else {
-    box.innerHTML = `${hint}${truncated}` + lines.map(line => {
+    box.innerHTML = `${hint}${truncated}${filterNote}` + displayLines.map(line => {
       const cls = _logLineSeverityClass(line);
       return `<div class="log-line ${cls}">${esc(line)}</div>`;
     }).join('');
@@ -2726,7 +2772,7 @@ function _renderLogs(data) {
   if (status) {
     const bytes = data && Number(data.total_bytes || 0);
     const when = data && data.mtime ? new Date(data.mtime * 1000).toLocaleString() : t('logs_no_mtime');
-    status.textContent = `${lines.length} / ${data.tail || _selectedLogsTail()} lines · ${bytes.toLocaleString()} bytes · ${when}`;
+    status.textContent = `${rawLines.length} / ${data.tail || _selectedLogsTail()} lines · ${bytes.toLocaleString()} bytes · ${when}`;
   }
 }
 
@@ -2754,9 +2800,10 @@ function _syncLogsAutoRefresh() {
 }
 
 async function copyLogsAll() {
-  const text = _lastLogsLines.join('\n');
+  const lines = _filteredLogsLines();
+  const text = lines.join('\n');
   try {
-    await navigator.clipboard.writeText(text);
+    await _copyText(text);
     showToast(t('logs_copied'));
   } catch(e) {
     showToast(t('copy_failed'), 'error');
@@ -5986,7 +6033,9 @@ function startCronPolling(){
       const data=await api(`/api/crons/recent?since=${_cronPollSince}`);
       if(data.completions&&data.completions.length>0){
         for(const c of data.completions){
-          showToast(t('cron_completion_status', c.name, c.status==='error' ? t('status_failed') : t('status_completed')),4000);
+          if(c.toast_notifications !== false){
+            showToast(t('cron_completion_status', c.name, c.status==='error' ? t('status_failed') : t('status_completed')),4000);
+          }
           _cronPollSince=Math.max(_cronPollSince,c.completed_at);
           if(c.job_id) _cronNewJobIds.add(String(c.job_id));
         }
