@@ -246,7 +246,10 @@ function _isSessionEffectivelyStreaming(s) {
 function _purgeStaleInflightEntries() {
   // Clean up INFLIGHT entries for sessions the server confirms are NOT
   // streaming. This prevents the in-memory cache from growing unbounded
-  // when streams end abnormally. (#2066)
+  // when streams end abnormally. (#2066)  Additionally, any INFLIGHT entry
+  // whose session id is no longer present in the current _allSessions list
+  // (deleted / archived / filtered out) is also removed so that ghost entries
+  // from deleted sessions do not accumulate. (#2092)
   if (typeof INFLIGHT !== 'object' || !INFLIGHT) return;
   const sessionsById = new Map();
   if (Array.isArray(_allSessions)) {
@@ -255,11 +258,20 @@ function _purgeStaleInflightEntries() {
     }
   }
   for (const sid of Object.keys(INFLIGHT)) {
+    if (!sessionsById.has(sid)) {
+      // Session is absent from _allSessions — it was deleted / archived /
+      // filtered and can never stream again, so drop the entry.
+      delete INFLIGHT[sid];
+      if (typeof clearInflightState === 'function') clearInflightState(sid);
+      continue;
+    }
     const s = sessionsById.get(sid);
-    if (s && !s.is_streaming) {
+    if (!s.is_streaming) {
+      // Session exists but is not streaming — purge it.
       delete INFLIGHT[sid];
       if (typeof clearInflightState === 'function') clearInflightState(sid);
     }
+    // Sessions that exist and are still streaming are preserved.
   }
 }
 
@@ -641,6 +653,7 @@ async function loadSession(sid){
       setComposerStatus('');
       updateQueueBadge(sid);
       syncTopbar();renderMessages();
+      if(typeof resumeManualCompressionForSession==='function') resumeManualCompressionForSession(sid);
       // Kick off loadDir first (issues network requests), then highlight code.
       // The fetch is dispatched before the CPU-bound Prism pass begins.
       const _dirP=loadDir('.');
@@ -1272,6 +1285,9 @@ let _sessionActionAnchor = null;
 let _sessionActionSessionId = null;
 const _expandedChildSessionKeys = new Set();
 const _expandedLineageKeys = new Set();
+const _lineageReportCache = new Map();
+const _lineageReportInflight = new Map();
+let _lineageReportCacheGeneration = 0;
 let _sessionVisibleSidebarIds = [];
 const SESSION_VIRTUAL_ROW_HEIGHT = 52;
 const SESSION_VIRTUAL_BUFFER_ROWS = 12;
@@ -1290,11 +1306,20 @@ function _worktreeSessionCount(ids){
     return count+(session&&session.worktree_path?1:0);
   },0);
 }
+function _sessionResponseRetainsWorktree(response, session){
+  if(response&&typeof response.worktree_retained==='boolean') return response.worktree_retained;
+  return !!(session&&session.worktree_path);
+}
+function _worktreeResponseCount(results){
+  return (results||[]).reduce((count,result)=>{
+    return count+(_sessionResponseRetainsWorktree(result&&result.response,result&&result.session)?1:0);
+  },0);
+}
 function _sessionArchiveDescription(session){
   return session&&session.worktree_path?t('session_archive_worktree_desc'):t('session_archive_desc');
 }
-function _sessionArchiveToast(session){
-  return session&&session.worktree_path?t('session_archived_worktree'):t('session_archived');
+function _sessionArchiveToast(response, session){
+  return _sessionResponseRetainsWorktree(response,session)?t('session_archived_worktree'):t('session_archived');
 }
 function _sessionDeleteDescription(session){
   return session&&session.worktree_path?t('session_delete_worktree_desc'):t('session_delete_desc');
@@ -1398,14 +1423,20 @@ function _renderBatchActionBar(){
   archiveBtn.onclick=async()=>{
     const ids=[..._selectedSessions];
     const wtCount=_worktreeSessionCount(ids);
+    const sessionsById=new Map(ids.map(sid=>[sid,_sessionSnapshotById(sid)]));
     const ok=await showConfirmDialog({
       message:wtCount?t('session_batch_archive_worktree_confirm',ids.length,wtCount):t('session_batch_archive_confirm',ids.length),
       confirmLabel:t('session_batch_archive'),
       danger:true
     });
     if(!ok)return;
-    try{await Promise.all(ids.map(sid=>api('/api/session/archive',{method:'POST',body:JSON.stringify({session_id:sid,archived:true})})));
-      showToast(wtCount?t('session_archived_worktree'):t('session_archived'));exitSessionSelectMode();await renderSessionList();
+    try{
+      const results=await Promise.all(ids.map(async sid=>{
+        const response=await api('/api/session/archive',{method:'POST',body:JSON.stringify({session_id:sid,archived:true})});
+        return {response,session:sessionsById.get(sid)||null};
+      }));
+      const retainedCount=_worktreeResponseCount(results);
+      showToast(retainedCount?t('session_archived_worktree'):t('session_archived'));exitSessionSelectMode();await renderSessionList();
     }catch(e){showToast('Archive failed: '+(e.message||e));}
   };bar.appendChild(archiveBtn);
   // Move
@@ -1418,6 +1449,7 @@ function _renderBatchActionBar(){
   deleteBtn.onclick=async()=>{
     const ids=[..._selectedSessions];
     const wtCount=_worktreeSessionCount(ids);
+    const sessionsById=new Map(ids.map(sid=>[sid,_sessionSnapshotById(sid)]));
     const ok=await showConfirmDialog({
       message:wtCount?t('session_batch_delete_worktree_confirm',ids.length,wtCount):t('session_batch_delete_confirm',ids.length),
       confirmLabel:t('delete_title'),
@@ -1425,7 +1457,11 @@ function _renderBatchActionBar(){
     });
     if(!ok)return;
     try{
-      await Promise.all(ids.map(sid=>api('/api/session/delete',{method:'POST',body:JSON.stringify({session_id:sid})})));
+      const results=await Promise.all(ids.map(async sid=>{
+        const response=await api('/api/session/delete',{method:'POST',body:JSON.stringify({session_id:sid})});
+        return {response,session:sessionsById.get(sid)||null};
+      }));
+      const retainedCount=_worktreeResponseCount(results);
       ids.forEach(_clearHandoffStorageForSession);
       if(S.session&&ids.includes(S.session.session_id)){
         S.session=null;S.messages=[];S.entries=[];localStorage.removeItem('hermes-webui-session');
@@ -1433,7 +1469,7 @@ function _renderBatchActionBar(){
         if(remaining.sessions&&remaining.sessions.length){await loadSession(remaining.sessions[0].session_id);}
         else{$('msgInner').innerHTML='';$('emptyState').style.display='';}
       }
-      showToast((wtCount?t('session_deleted_worktree'):t('session_delete'))+' ('+ids.length+')');exitSessionSelectMode();await renderSessionList();
+      showToast((retainedCount?t('session_deleted_worktree'):t('session_delete'))+' ('+ids.length+')');exitSessionSelectMode();await renderSessionList();
     }catch(e){showToast('Delete failed: '+(e.message||e));}
   };bar.appendChild(deleteBtn);
 }
@@ -1606,11 +1642,11 @@ function _openSessionActionMenu(session, anchorEl){
     async()=>{
       closeSessionActionMenu();
       try{
-        await api('/api/session/archive',{method:'POST',body:JSON.stringify({session_id:session.session_id,archived:!session.archived})});
+        const response=await api('/api/session/archive',{method:'POST',body:JSON.stringify({session_id:session.session_id,archived:!session.archived})});
         session.archived=!session.archived;
         if(S.session&&S.session.session_id===session.session_id) S.session.archived=session.archived;
         await renderSessionList();
-        showToast(session.archived?_sessionArchiveToast(session):t('session_restored'));
+        showToast(session.archived?_sessionArchiveToast(response,session):t('session_restored'));
       }catch(err){showToast(t('session_archive_failed')+err.message);}
     }
   ));
@@ -1738,6 +1774,7 @@ async function renderSessionList(){
     // without a second round-trip. Stashed on the module for renderSessionListFromCache.
     _otherProfileCount = sessData.other_profile_count || 0;
     _allSessions = _mergeOptimisticFirstTurnSessions(sessData.sessions||[]);
+    _clearLineageReportCache();
     _allProjects = projData.projects||[];
     // Capture server clock for clock-skew compensation (issue #1144).
     // server_time is epoch seconds from the server's time.time().
@@ -2073,6 +2110,73 @@ function _sessionSegmentCount(s){
   if(Array.isArray(s._lineage_segments)) counts.push(s._lineage_segments.length);
   const count=Math.max(0,...counts.map(n=>Number.isFinite(n)?n:0));
   return count>1?count:0;
+}
+
+function _clearLineageReportCache(){
+  _lineageReportCache.clear();
+  _lineageReportInflight.clear();
+  _lineageReportCacheGeneration++;
+}
+
+function _lineageReportCacheKey(s,lineageKey){
+  return lineageKey||_sidebarLineageKeyForRow(s)||null;
+}
+
+function _lineageLocalSegmentCount(s){
+  if(!s) return 0;
+  if(Array.isArray(s._lineage_segments)) return s._lineage_segments.length;
+  return s.session_id?1:0;
+}
+
+function _lineageReportNeedsFetch(s,lineageKey,segmentCount){
+  const key=_lineageReportCacheKey(s,lineageKey);
+  if(!s||!s.session_id||!key) return false;
+  if(_lineageReportCache.has(key)||_lineageReportInflight.has(key)) return false;
+  return Number(segmentCount||0)>_lineageLocalSegmentCount(s);
+}
+
+function _lineageSegmentsForRender(s,lineageKey){
+  const segments=[];
+  const seen=new Set();
+  const currentSid=s&&s.session_id;
+  const addSegment=(seg)=>{
+    if(!seg||!seg.session_id||seg.session_id===currentSid||seen.has(seg.session_id)) return;
+    if(seg.role==='child_session') return;
+    seen.add(seg.session_id);
+    segments.push({...seg});
+  };
+  for(const seg of (Array.isArray(s&&s._lineage_segments)?s._lineage_segments:[])) addSegment(seg);
+  const cached=_lineageReportCache.get(_lineageReportCacheKey(s,lineageKey));
+  if(cached&&Array.isArray(cached.segments)){
+    for(const seg of cached.segments) addSegment(seg);
+  }
+  return segments;
+}
+
+function _fetchLineageReportForRow(s,lineageKey){
+  const key=_lineageReportCacheKey(s,lineageKey);
+  if(!s||!s.session_id||!key) return Promise.resolve(null);
+  if(_lineageReportCache.has(key)) return Promise.resolve(_lineageReportCache.get(key));
+  if(_lineageReportInflight.has(key)) return _lineageReportInflight.get(key);
+  const generation=_lineageReportCacheGeneration;
+  let request;
+  request=api('/api/session/lineage/report?session_id='+encodeURIComponent(s.session_id))
+    .then(report=>{
+      if(generation===_lineageReportCacheGeneration){
+        _lineageReportCache.set(key,(report&&report.found!==false)?report:{error:true});
+      }
+      return report;
+    })
+    .catch(err=>{
+      console.warn('lineage report',err);
+      if(generation===_lineageReportCacheGeneration) _lineageReportCache.set(key,{error:true});
+      return null;
+    })
+    .finally(()=>{
+      if(_lineageReportInflight.get(key)===request) _lineageReportInflight.delete(key);
+    });
+  _lineageReportInflight.set(key,request);
+  return request;
 }
 
 function _sidebarLineageKeyForRow(s){
@@ -2683,8 +2787,10 @@ function renderSessionListFromCache(){
     }
     const lineageKey=_sidebarLineageKeyForRow(s);
     const segmentCount=_sessionSegmentCount(s);
-    const lineageSegments=Array.isArray(s._lineage_segments)?s._lineage_segments.filter(seg=>seg&&seg.session_id&&seg.session_id!==s.session_id):[];
-    const canExpandLineageSegments=Boolean(lineageKey&&segmentCount>1&&lineageSegments.length>0);
+    const lineageSegments=_lineageSegmentsForRender(s,lineageKey);
+    const needsLineageReport=_lineageReportNeedsFetch(s,lineageKey,segmentCount);
+    const lineageReportKey=_lineageReportCacheKey(s,lineageKey);
+    const canExpandLineageSegments=Boolean(lineageKey&&segmentCount>1&&(lineageSegments.length>0||needsLineageReport||_lineageReportInflight.has(lineageReportKey)));
     const lineageSegmentsExpanded=canExpandLineageSegments&&_expandedLineageKeys.has(lineageKey);
     if(segmentCount>0){
       const segmentCountEl=document.createElement('span');
@@ -2701,7 +2807,10 @@ function renderSessionListFromCache(){
           e.preventDefault();
           e.stopPropagation();
           if(_expandedLineageKeys.has(lineageKey)) _expandedLineageKeys.delete(lineageKey);
-          else _expandedLineageKeys.add(lineageKey);
+          else {
+            _expandedLineageKeys.add(lineageKey);
+            if(needsLineageReport) _fetchLineageReportForRow(s,lineageKey).then(()=>renderSessionListFromCache());
+          }
           renderSessionListFromCache();
         };
         segmentCountEl.onclick=toggleLineageSegments;
@@ -3051,8 +3160,9 @@ async function deleteSession(sid){
     danger:true
   });
   if(!ok)return;
+  let response=null;
   try{
-    await api('/api/session/delete',{method:'POST',body:JSON.stringify({session_id:sid})});
+    response=await api('/api/session/delete',{method:'POST',body:JSON.stringify({session_id:sid})});
     _clearHandoffStorageForSession(sid);
   }catch(e){setStatus(`Delete failed: ${e.message}`);return;}
   if(S.session&&S.session.session_id===sid){
@@ -3072,7 +3182,7 @@ async function deleteSession(sid){
       if(typeof syncAppTitlebar==='function') syncAppTitlebar();
     }
   }
-  showToast(session&&session.worktree_path?t('session_deleted_worktree'):t('session_deleted'));
+  showToast(_sessionResponseRetainsWorktree(response,session)?t('session_deleted_worktree'):t('session_deleted'));
   await renderSessionList();
 }
 
