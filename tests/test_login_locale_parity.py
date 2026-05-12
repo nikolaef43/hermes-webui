@@ -328,3 +328,33 @@ def test_login_flow_keys_are_translated(loc_key: str):
         f"Locale {loc_key!r} leaks English for login-flow keys: {leaks}. "
         f"Translate these in static/i18n.js (issue #1442)."
     )
+
+
+# ── Session-management key parity ─────────────────────────────────────────────
+#
+# Keys added for session batch operations and multi-select (#2112).
+# Every locale block must have these keys; missing them falls back to English
+# which is a regression for non-English users.
+
+SESSION_MANAGEMENT_KEYS = (
+    "session_batch_delete_confirm",
+    "session_batch_archive_confirm",
+    "session_batch_delete_worktree_confirm",
+    "session_batch_archive_worktree_confirm",
+    "session_select_mode",
+    "session_select_mode_desc",
+    "session_select_all",
+    "session_selected_count",
+    "session_no_selection",
+)
+
+
+@pytest.mark.parametrize("loc_key", ["en", "es", "de", "ru", "zh", "zh-Hant", "ja", "pt", "ko"])
+def test_session_management_keys_present(loc_key: str):
+    """Every locale block must define all session-management keys (no fallback to English)."""
+    seg = _i18n_locale_block(loc_key)
+    missing = [k for k in SESSION_MANAGEMENT_KEYS if _value_of(seg, k) is None]
+    assert not missing, (
+        f"Locale {loc_key!r} is missing session-management keys: {missing}. "
+        f"Add translations in static/i18n.js (issue #2112)."
+    )

@@ -8947,6 +8947,13 @@ const LOCALES = {
     session_deleted_worktree: 'Conversa excluída. O worktree permanece no disco.',
     session_batch_delete_worktree_confirm: 'Excluir {0} conversas? {1} conversa(s) com worktree manterão seus diretórios de worktree no disco.',
     session_batch_archive_worktree_confirm: 'Arquivar {0} conversas? {1} conversa(s) com worktree manterão seus diretórios de worktree no disco.',
+    session_batch_delete_confirm: 'Excluir {0} conversas?',
+    session_batch_archive_confirm: 'Arquivar {0} conversas?',
+    session_select_mode: 'Selecionar',
+    session_select_mode_desc: 'Selecionar conversas para gerenciamento em lote',
+    session_select_all: 'Selecionar todas',
+    session_selected_count: '{0} selecionadas',
+    session_no_selection: 'Nenhuma conversa selecionada',
     // settings panel
     settings_heading_title: 'Control Center',
     settings_heading_subtitle: 'Preferências, ferramentas de conversa e controles do sistema.',
