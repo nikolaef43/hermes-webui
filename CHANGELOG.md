@@ -38,6 +38,10 @@
 
 - **PR #2132** by @Michaelyklam (refs #2096) — Docs-only: added `Synchronous durability design rationale` to `docs/rfcs/turn-journal.md`. Documents why submitted-event journaling stays synchronously fsync-backed today, qualitative fsync latency expectations for SSD/HDD/Docker-overlay filesystems, and maintainer benchmark guidance for measuring p50/p95/p99 append/fsync latency before any future async lifecycle journaling.
 
+### Stage-344 maintainer fixes
+
+- **`api/routes.py:_handle_session_compress_start/status` (#2128 polish)** — Opus SHOULD-FIX from stage-344 review. Two related UX bugs in the new async manual-compression flow: (1) `compress/status` popped the `done` job entry on first read, which left a second open tab with `{status:"idle"}` and a "Compression job is no longer available" toast — fixed by letting the existing 10-minute TTL handle eviction so all tabs see the same terminal payload; (2) re-invoking `compress/start` within the 10-minute TTL returned the stale prior `done` payload instead of running a new compression — fixed by always dropping the existing entry and starting a fresh worker, so a user closing a tab mid-compress and re-running `/compress` on a fresh open gets a new result. Both are 1-block tweaks; existing `tests/test_sprint46.py` 10/10 still passes. The third Opus SHOULD-FIX (#2135 `cfg["model"]` fallback when `provider=custom:X` doesn't match any entry) is deferred to a follow-up — it's strictly no-worse-than-master behavior, but worth tightening to skip the URL probe when no entry matched.
+
 ## [v0.51.50] — 2026-05-12 — Release Z (stage-343 — single-PR — ctl.sh bash 3.2 macOS compat fix + regression test suite)
 
 ### Fixed

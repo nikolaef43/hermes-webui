@@ -7894,9 +7894,14 @@ def _handle_session_compress_start(handler, body):
             existing_payload = _manual_compression_status_payload(existing)
             if existing_payload.get("status") == "running":
                 return j(handler, existing_payload)
+            # Stage-344 Opus SHOULD-FIX (#2128): always start fresh on re-invoke.
+            # The prior implementation short-circuited and returned a stale `done`
+            # payload for the full 10-minute TTL window when /compress/start was
+            # re-invoked, so a user closing the tab mid-compress and re-running
+            # /compress on a fresh open would get the previous result back rather
+            # than a new compression. Drop the entry and fall through to the
+            # fresh-worker path below.
             _MANUAL_COMPRESSION_JOBS.pop(sid, None)
-            if existing_payload.get("status") == "done":
-                return j(handler, existing_payload)
         job = {
             "session_id": sid,
             "focus_topic": focus_topic,
@@ -7928,8 +7933,12 @@ def _handle_session_compress_status(handler, sid):
         if not job:
             return j(handler, {"ok": True, "status": "idle", "session_id": sid})
         payload = _manual_compression_status_payload(job)
-        if payload.get("status") == "done":
-            _MANUAL_COMPRESSION_JOBS.pop(sid, None)
+        # Stage-344 Opus SHOULD-FIX (#2128): do not pop the job on first
+        # read of a `done` payload. The session may be open in multiple
+        # tabs, and the first tab's poll would otherwise leave the second
+        # tab with `idle` and a "Compression job is no longer available"
+        # toast. Let the 10-minute TTL handle eviction so all open tabs
+        # see the same terminal payload.
         return j(handler, payload)
 
 
