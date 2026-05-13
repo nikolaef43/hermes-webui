@@ -1891,16 +1891,18 @@ body.resizing .sidebar{transition:none!important;}
   to{-webkit-mask-position:-200% 0;mask-position:-200% 0;}
 }
 .tool-call-group[data-live-tool-call-group="1"] .tool-call-group-label::after{
+  --activity-sweep-highlight:linear-gradient(90deg,var(--accent) 0%,var(--accent) 48%,color-mix(in srgb,var(--accent) 88%,#000) 48.7%,color-mix(in srgb,var(--accent) 88%,#000) 51.3%,var(--accent) 52%,var(--accent) 100%);
+  --activity-sweep-mask:linear-gradient(90deg,rgba(0,0,0,0) 0%,rgba(0,0,0,0) 44%,rgba(0,0,0,.12) 45.3%,rgba(0,0,0,.32) 46.7%,rgba(0,0,0,.58) 48%,rgba(0,0,0,.8) 48.7%,rgba(0,0,0,.8) 51.3%,rgba(0,0,0,.58) 52%,rgba(0,0,0,.32) 53.3%,rgba(0,0,0,.12) 54.7%,rgba(0,0,0,0) 56%,rgba(0,0,0,0) 100%);
   content:attr(data-sweep-label);
   position:absolute;inset:0;
   color:var(--accent);
-  background-image:linear-gradient(90deg,var(--accent) 0%,var(--accent) 48.5%,color-mix(in srgb,var(--accent) 88%,#000) 49%,color-mix(in srgb,var(--accent) 88%,#000) 51%,var(--accent) 51.5%,var(--accent) 100%);
+  background-image:var(--activity-sweep-highlight);
   -webkit-background-clip:text;
           background-clip:text;
   -webkit-text-fill-color:transparent;
   pointer-events:none;
-  -webkit-mask-image:linear-gradient(90deg,rgba(0,0,0,0) 0%,rgba(0,0,0,0) 45.5%,rgba(0,0,0,.12) 46.5%,rgba(0,0,0,.32) 47.5%,rgba(0,0,0,.58) 48.5%,rgba(0,0,0,.8) 49%,rgba(0,0,0,.8) 51%,rgba(0,0,0,.58) 51.5%,rgba(0,0,0,.32) 52.5%,rgba(0,0,0,.12) 53.5%,rgba(0,0,0,0) 54.5%,rgba(0,0,0,0) 100%);
-          mask-image:linear-gradient(90deg,rgba(0,0,0,0) 0%,rgba(0,0,0,0) 45.5%,rgba(0,0,0,.12) 46.5%,rgba(0,0,0,.32) 47.5%,rgba(0,0,0,.58) 48.5%,rgba(0,0,0,.8) 49%,rgba(0,0,0,.8) 51%,rgba(0,0,0,.58) 51.5%,rgba(0,0,0,.32) 52.5%,rgba(0,0,0,.12) 53.5%,rgba(0,0,0,0) 54.5%,rgba(0,0,0,0) 100%);
+  -webkit-mask-image:var(--activity-sweep-mask);
+          mask-image:var(--activity-sweep-mask);
   -webkit-mask-size:250% 100%;
           mask-size:250% 100%;
   -webkit-mask-repeat:no-repeat;
