@@ -3718,6 +3718,8 @@ def handle_get(handler, parsed) -> bool:
                         "current_sha": "abc1234",
                         "latest_sha": "def5678",
                         "branch": "master",
+                        "repo_url": "https://github.com/nesquena/hermes-webui",
+                        "compare_url": "https://github.com/nesquena/hermes-webui/compare/abc1234...def5678",
                     },
                     "agent": {
                         "name": "agent",
@@ -3725,6 +3727,8 @@ def handle_get(handler, parsed) -> bool:
                         "current_sha": "aaa0001",
                         "latest_sha": "bbb0002",
                         "branch": "master",
+                        "repo_url": "https://github.com/NousResearch/hermes-agent",
+                        "compare_url": "https://github.com/NousResearch/hermes-agent/compare/aaa0001...bbb0002",
                     },
                     "checked_at": 0,
                 },

@@ -3878,38 +3878,91 @@ function _formatUpdateTargetStatus(label,info){
   const branch=info.branch?` (${info.branch})`:'';
   return `${label}${branch}: ${info.behind} update${info.behind>1?'s':''}`;
 }
+function _isSafeUpdateCompareUrl(url){
+  if(!url||!/^https?:\/\//i.test(url)) return false;
+  try{
+    const parsed=new URL(url);
+    return parsed.protocol==='https:'||parsed.protocol==='http:';
+  }catch(e){
+    return false;
+  }
+}
+function _updateCompareUrl(info){
+  if(!info) return null;
+  const compareUrl=info.compare_url||null;
+  if(compareUrl) return _isSafeUpdateCompareUrl(compareUrl)?compareUrl:null;
+  const repo_url=info.repo_url;
+  const currentSha=info.current_sha;
+  const latestSha=info.latest_sha;
+  if(!(repo_url&&currentSha&&latestSha)) return null;
+  const fallbackUrl=repo_url+'/compare/'+currentSha+'...'+latestSha;
+  return _isSafeUpdateCompareUrl(fallbackUrl)?fallbackUrl:null;
+}
+function _updateWhatsNewTargets(data){
+  const targets=[
+    {key:'webui',label:'WebUI',info:data&&data.webui},
+    {key:'agent',label:'Agent',info:data&&data.agent},
+  ];
+  return targets.map((target)=>({
+    key:target.key,
+    label:target.label,
+    info:target.info,
+    url:_updateCompareUrl(target.info),
+  })).filter((target)=>target.info&&target.info.behind>0&&target.url);
+}
+function _renderUpdateWhatsNewLinks(data){
+  const container=$('updateWhatsNewLinks');
+  if(!container) return;
+  container.replaceChildren();
+  const targets=_updateWhatsNewTargets(data);
+  if(!targets.length){
+    container.style.display='none';
+    return;
+  }
+  container.style.display='block';
+  if(targets.length===1){
+    const target=targets[0];
+    const link=document.createElement('a');
+    link.href=target.url;
+    link.target='_blank';
+    link.rel='noopener';
+    link.style.color='var(--accent)';
+    link.style.textDecoration='underline';
+    link.textContent="What's new in "+target.label+'?';
+    container.appendChild(link);
+    return;
+  }
+  container.appendChild(document.createTextNode("What's new: "));
+  targets.forEach((target,idx)=>{
+    if(idx>0) container.appendChild(document.createTextNode(' \u00b7 '));
+    const link=document.createElement('a');
+    link.href=target.url;
+    link.target='_blank';
+    link.rel='noopener';
+    link.style.color='var(--accent)';
+    link.style.textDecoration='underline';
+    link.textContent=target.label;
+    container.appendChild(link);
+  });
+}
 function _showUpdateBanner(data){
   const parts=[];
   const webuiPart=_formatUpdateTargetStatus('WebUI',data.webui);
   const agentPart=_formatUpdateTargetStatus('Agent',data.agent);
   if(webuiPart) parts.push(webuiPart);
   if(agentPart) parts.push(agentPart);
-  if(!parts.length)return;
+  window._updateData=data;
+  if(!parts.length){
+    _renderUpdateWhatsNewLinks(data);
+    const staleBanner=$('updateBanner');
+    if(staleBanner) staleBanner.classList.remove('visible');
+    return;
+  }
   const msg=$('updateMsg');
   if(msg) msg.textContent='\u2B06 '+parts.join(', ')+' available';
   const banner=$('updateBanner');
   if(banner) banner.classList.add('visible');
-  window._updateData=data;
-  // Wire up "What's new?" link.
-  //
-  // Reset display:none + clear the href on every render — otherwise a stale
-  // link from a prior update banner can stay visible after we've moved past
-  // a state where the new payload no longer carries usable SHAs (#1579 case
-  // when the local HEAD diverges from upstream and the compare URL would 404).
-  const link=$('updateWhatsNew');
-  if(link){
-    link.style.display='none';
-    link.removeAttribute('href');
-    if(data.webui){
-      const repoUrl=data.webui.repo_url;
-      const curSha=data.webui.current_sha;
-      const newSha=data.webui.latest_sha;
-      if(repoUrl && curSha && newSha){
-        link.href=repoUrl+'/compare/'+curSha+'...'+newSha;
-        link.style.display='inline';
-      }
-    }
-  }
+  _renderUpdateWhatsNewLinks(data);
 }
 function dismissUpdate(){
   const b=$('updateBanner');if(b)b.classList.remove('visible');

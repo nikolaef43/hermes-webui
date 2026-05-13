@@ -12,6 +12,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from api.config import REPO_ROOT, STREAMS, STREAMS_LOCK
 
@@ -169,6 +170,16 @@ def _normalize_remote_url(remote_url):
     return remote_url.rstrip('/')
 
 
+def _build_compare_url(repo_url, current_sha, latest_sha):
+    """Return a safe browser compare URL, or None when any piece is missing."""
+    if not (repo_url and current_sha and latest_sha):
+        return None
+    parsed = urlparse(repo_url)
+    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        return None
+    return f"{repo_url}/compare/{current_sha}...{latest_sha}"
+
+
 def _split_remote_ref(ref):
     """Split 'origin/branch-name' into ('origin', 'branch-name').
 
@@ -262,6 +273,7 @@ def _check_repo(path, name):
         'latest_sha': latest,
         'branch': compare_ref,
         'repo_url': remote_url,
+        'compare_url': _build_compare_url(remote_url, current, latest),
     }
 
 

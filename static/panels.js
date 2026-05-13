@@ -5996,6 +5996,7 @@ async function checkUpdatesNow(){
         if(typeof _showUpdateBanner==='function') _showUpdateBanner(data);
       } else {
         if(status){status.textContent=t('settings_up_to_date');status.style.color='var(--success)';}
+        if(typeof _showUpdateBanner==='function') _showUpdateBanner(data);
       }
     }
   } catch(e){
