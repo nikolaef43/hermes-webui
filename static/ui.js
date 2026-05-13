@@ -3933,6 +3933,28 @@ function _hideUpdateSummaryPanel(){
   if(text) text.textContent='';
   if(links){links.replaceChildren();links.style.display='none';}
 }
+function _updateSummarySignature(info){
+  if(!info) return '';
+  return [info.current_sha||'',info.latest_sha||'',info.behind||0,info.compare_url||''].join('|');
+}
+function _updateSummaryButtonLabel(target,data){
+  const labels=target.key==='webui'
+    ? {generate:'Generate WebUI summary',view:'View generated WebUI summary',regenerate:'Re-generate WebUI summary'}
+    : {generate:'Generate Agent summary',view:'View generated Agent summary',regenerate:'Re-generate Agent summary'};
+  const cache=(window._whatsNewGeneratedSummaries||{})[target.key];
+  const signature=_updateSummarySignature(data&&data[target.key]);
+  if(cache&&cache.signature===signature&&cache.payload) return labels.view;
+  if(cache&&cache.signature!==signature) return labels.regenerate;
+  return labels.generate;
+}
+function _rememberGeneratedSummary(target,payload,data){
+  if(!target) return;
+  window._whatsNewGeneratedSummaries=window._whatsNewGeneratedSummaries||{};
+  window._whatsNewGeneratedSummaries[target]={
+    signature:_updateSummarySignature(data&&data[target]),
+    payload:payload,
+  };
+}
 function _renderUpdateSummaryPanel(payload,data,targetKey){
   const panel=$('updateSummaryPanel');
   const text=$('updateSummaryText');
@@ -3987,10 +4009,19 @@ function _renderUpdateSummaryPanel(payload,data,targetKey){
 async function showWhatsNewSummary(target){
   const data=window._updateData||{};
   const scopedUpdates=target?{[target]:data[target]}:data;
+  const cache=target?(window._whatsNewGeneratedSummaries||{})[target]:null;
+  const signature=target?_updateSummarySignature(data[target]):'';
+  if(cache&&cache.signature===signature&&cache.payload){
+    _renderUpdateSummaryPanel(cache.payload,data,target);
+    _renderUpdateWhatsNewLinks(data,{mode:'summary'});
+    return;
+  }
   _renderUpdateSummaryPanel({summary:'Writing a simple summary…'},data,target);
   try{
     const res=await api('/api/updates/summary',{method:'POST',body:JSON.stringify({updates:scopedUpdates,target:target||null})});
+    _rememberGeneratedSummary(target,res,data);
     _renderUpdateSummaryPanel(res,data,target);
+    _renderUpdateWhatsNewLinks(data,{mode:'summary'});
   }catch(e){
     console.warn('[updates] summary failed',e);
     _renderUpdateSummaryPanel({
@@ -4026,7 +4057,7 @@ function _renderUpdateWhatsNewLinks(data){
       btn.style.border='0';
       btn.style.padding='0';
       btn.style.cursor='pointer';
-      btn.textContent=target.key==='webui'?'Generate WebUI summary':'Generate Agent summary';
+      btn.textContent=_updateSummaryButtonLabel(target,data);
       btn.onclick=()=>showWhatsNewSummary(target.key);
       container.appendChild(btn);
     });

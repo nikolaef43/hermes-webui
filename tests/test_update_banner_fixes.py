@@ -765,6 +765,13 @@ class TestWhatsNewSummaryToggle:
         assert 'updateSummarySections' in src
         assert 'Generate WebUI summary' in src
         assert 'Generate Agent summary' in src
+        assert 'View generated WebUI summary' in src
+        assert 'View generated Agent summary' in src
+        assert 'Re-generate WebUI summary' in src
+        assert 'Re-generate Agent summary' in src
+        assert 'window._whatsNewGeneratedSummaries' in src
+        assert 'function _updateSummarySignature' in src
+        assert 'function _updateSummaryButtonLabel' in src
         assert 'showWhatsNewSummary(target.key)' in src
         assert 'target?{[target]:data[target]}:data' in src
         assert 'target:target||null' in src
