@@ -1576,10 +1576,25 @@ def resolve_model_provider(model_id: str) -> tuple:
         and not config_provider.startswith('custom:')
     )
     _default_model = model_cfg.get('default') if isinstance(model_cfg, dict) else None
+    # Owns model if it appears in the static catalog for the configured provider.
+    _provider_models_set: set[str] = set()
+    if (
+        config_provider is not None
+        and config_provider in _PROVIDER_MODELS
+        and isinstance(_PROVIDER_MODELS[config_provider], list)
+    ):
+        _provider_models_set = {
+            m.get('id', '') for m in _PROVIDER_MODELS[config_provider]
+            if isinstance(m, dict) and isinstance(m.get('id'), str)
+        }
     _skip_custom_providers = (
         _is_explicit_non_custom_provider
-        and _default_model is not None
-        and model_id == _default_model
+        and (
+            # Guard 1: model is the configured default (existing behaviour).
+            (_default_model is not None and model_id == _default_model)
+            # Guard 2: model is owned by the configured non-custom provider.
+            or model_id in _provider_models_set
+        )
     )
     custom_providers = cfg.get('custom_providers', [])
     if isinstance(custom_providers, list) and not _skip_custom_providers:
