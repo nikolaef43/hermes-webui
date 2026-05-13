@@ -2,14 +2,40 @@
 
 ## [Unreleased]
 
+### Added
+
+- **PR #2156** by @franksong2702 — Issue #2057 Slice 2: guarded worktree remove action. New `POST /api/session/worktree/remove` and `remove_worktree_for_session(session, *, force=False)` helper. Rejects removal when the worktree is locked by an active stream or terminal, when it has local changes, untracked files, or unpushed commits ahead of origin. Clean removal runs without `--force`; `--force` is only used when the backend is explicitly called with `force=True`. Adds explicit per-session UI in the sidebar action menu (i18n strings for 9 locales), confirm dialog with two screenshot artifacts in `docs/pr-media/2156/`, and a 335-line regression suite in `tests/test_worktree_remove.py` covering the five fail-closed cases plus the explicit `force=True` override.
+
+- **PR #2160** by @franksong2702 — CSP report collector endpoint (closes #2095). New unauthenticated `POST /api/csp-report` accepts both legacy `report-uri` JSON (`{"csp-report": ...}`) and modern `application/reports+json` array payloads, with per-client in-memory rate limiting; over-limit reports are dropped with a warning while still returning 204 to avoid browser retry amplification. Existing CSP report-only header now advertises the collector via `report-uri /api/csp-report; report-to csp-endpoint`, with a matching `Report-To` response header. 117-line regression suite covering headers, auth/CSRF carve-out, both payload shapes, and rate-limit behavior.
+
 ### Fixed
 
-- `ctl.sh status` and `ctl.sh stop` now recognize daemons launched through a custom `HERMES_WEBUI_PYTHON` wrapper, keeping the Python 3.13 process-lifecycle regression tests stable without weakening stale-PID protection.
+- **PR #2158** by @franksong2702 (closes #2154) — Extends the stale-stream writeback guard from PR #2136 to two additional sites Opus advisor flagged on stage-345 review: the outer exception path (`api/streaming.py:3989`) that materializes `pending_user_message` and appends an `_error_message`, and the self-heal retry success path (`api/streaming.py:3947`) that persists `_heal_result`. Both can run after `active_stream_id` has rotated to a newer stream — same corruption pattern PR #2136 fixed on the normal success path. Each new site now mirrors the canonical guard: `if not _stream_writeback_is_current(s, stream_id): logger.info("Skipping stale stream writeback at <site>"); return`. Adds regression coverage that pins both guards before their respective persistence operations.
+
+- **PR #2159** by @franksong2702 (closes #2157) — `/api/sessions` no longer serializes stale `active_stream_id` / `pending_*` fields after a stream dies or the server restarts. Adds a bounded route-layer post-pass that only considers rows with `active_stream_id` set and `is_streaming` not true, loads candidates with `metadata_only=True`, and delegates cleanup to the existing safe `_clear_stale_stream_state()` helper (preserves the #1558 full-load safety path and per-session lock recheck). Re-reads `all_sessions()` after a cleanup so the JSON response matches the persisted session state.
+
+- **PR #2161** by @franksong2702 (closes #2098) — Localized 5 Logs severity-filter keys (`logs_severity_*`) for `ja`, `ru`, `es`, `de`, `zh`, `zh-Hant`, `pt`, `ko`. Removes the affected `// TODO: translate` placeholders and adds the missing Traditional Chinese entries for these five keys. Regression coverage verifies each target locale has the expected localized values and that these key lines no longer carry TODO placeholders.
+
+- **PR #2173** by @franksong2702 (closes #2172) — `ctl.sh status` and `ctl.sh stop` now correctly recognize daemons started through a custom `HERMES_WEBUI_PYTHON` wrapper. Persists the resolved Python executable in `webui.ctl.env` as `PYTHON_EXE`, and `_is_owned_webui_pid()` now recognizes the recorded wrapper path while preserving the existing repo-root state guard. Stabilizes the existing ctl tests by waiting for the fake-wrapper log before reading it. Fixes the Python 3.13 CI failure exposed by PR #2171's session-tail tests.
+
+- **PR #2175** by @Michaelyklam (refs #2155) — Softened the session-lineage count badge from `X segments` to `X prior turn(s)` in the English base locale. Existing lineage expand/collapse behavior and accessibility attributes unchanged. Focused regression test verifies the new English badge label and forbids the old "segments" wording.
+
+- **PR #2176** by @MrFant — `_apply_provider_prefix()` no longer crashes with `AttributeError: 'dict' object has no attribute 'startswith'` when a provider's `models` config contains dict entries (`{"id": "x", "label": "y"}`) instead of plain strings. Fix extracts `id` and `label` from dict entries while keeping string entries as-is. Resolves `/api/models` and `/api/onboarding/status` 500 errors for users with dict-shaped model lists.
+
+### Performance
+
+- **PR #2166** by @franksong2702 — Consolidated session post-render processing into a single `postProcessRenderedMessages(container)` pass instead of two overlapping passes after both cached and freshly-rebuilt message DOM (plus a third highlight pass during idle session-loads). Scopes inline preview, tree-view, Mermaid, KaTeX, and code/copy-button passes to one walk over the rendered container. Vanilla JS architecture preserved; no changes to the markdown renderer, session loading, or DOM diffing model.
+
+- **PR #2170** by @franksong2702 — `/api/session?messages=0&resolve_model=0` metadata loads no longer pay the `_lookup_cli_session_metadata()` Agent/CLI scan for native WebUI sessions. New `_needs_cli_session_metadata()` predicate keeps the Agent metadata merge path for imported CLI sessions, messaging-backed sessions, read-only sessions, and external-agent sessions, but skips it for ordinary WebUI-native sessions. Profiling on real production state showed this was the remaining hot path after PR #2166 removed the duplicate browser post-render work.
+
+## [v0.51.52] — 2026-05-12 — Release AB (stage-345 — 2-PR low-risk batch — stream-ownership guard + Refresh-usage button on provider quota card)
+
+### Fixed
+
 - **PR #2136** by @LumenYoung — Stale stream writebacks no longer poison the active session transcript. `cancel_stream()` intentionally clears `active_stream_id` early so the UI can accept a follow-up turn while an old worker is unwinding — but the old worker could still return later from `run_conversation()` and persist its stale result over the newer transcript, causing visible transcript / turn journal / `state.db` to disagree (especially around cancel+retry on compressed continuations). Adds a single-line ownership check `_stream_writeback_is_current(session, stream_id)` (token equality against `session.active_stream_id`) and short-circuits both finalize paths: the success path in `_run_agent_streaming` and the cancel-handler path in `cancel_stream()`. When the stream no longer owns the writeback, both paths log `Skipping stale stream/cancel writeback` and return cleanly without persisting. 89-line regression suite in `tests/test_stale_stream_writeback.py`; companion updates to `tests/test_issue1361_cancel_data_loss.py` and `tests/test_sprint42.py` for the new return-without-persist behavior.
 
 ### Added
 
-- `POST /api/csp-report` now collects browser CSP report-only violations and the report-only policy advertises both `report-uri` and `report-to` sinks, making CSP dry-runs visible outside individual browser devtools consoles (closes #2095).
 - **PR #2150** by @Jordan-SkyLF — "Refresh usage" button on the Provider quota card in Settings → Providers. Calls `/api/provider/quota?refresh=1&ts=<now>` with `cache: 'no-store'` to bypass browser, service worker, and reverse-proxy caches that may have stamped a previous quota response, then re-renders just the quota card from the fresh response and shows a `Last checked ...` timestamp. Disabled `Refreshing…` state during the in-flight request; success toast on completion or failure toast if the refresh fails. Note: the `refresh=1` query param is a no-op at the server today (`get_provider_quota()` has no in-process cache layer), so the win is strictly browser-side cache-bust + the `no-store` fetch option. A future maintainer follow-up may add server-side TTL caching of OAuth account-limit fetches, at which point the `refresh=1` param becomes load-bearing on both sides.
 
 ## [v0.51.51] — 2026-05-12 — Release AA (stage-344 — 16-PR contributor batch — i18n + insights bucketing/mobile + manual-compress async + workspace recovery + iOS PWA scroll + Cloudflare login health + fr locale)
