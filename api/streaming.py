@@ -266,7 +266,7 @@ from api.workspace import set_last_workspace
 # Fields that are safe to send to LLM provider APIs.
 # Everything else (attachments, timestamp, _ts, etc.) is display-only
 # metadata added by the webui and must be stripped before the API call.
-_API_SAFE_MSG_KEYS = {'role', 'content', 'tool_calls', 'tool_call_id', 'name', 'refusal'}
+_API_SAFE_MSG_KEYS = {'role', 'content', 'tool_calls', 'tool_call_id', 'name', 'refusal', 'reasoning_content'}
 
 _NATIVE_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 
