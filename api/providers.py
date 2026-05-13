@@ -412,13 +412,17 @@ def _entry_is_pool_exhausted(entry):
 
 def _entry_pool_exhausted_reason(entry):
     code = _entry_value(entry, "last_error_code")
-    reset_at = _iso(_entry_pool_exhausted_until(entry))
+    reset_at = _entry_pool_retry_after(entry)
     reason = "Credential pool marked this credential exhausted"
     if code:
         reason += " after provider status " + code
     if reset_at:
         reason += "; retry after " + reset_at
     return reason + "."
+
+
+def _entry_pool_retry_after(entry):
+    return _iso(_entry_pool_exhausted_until(entry))
 
 
 def _fetch_codex_entry_snapshot(entry):
@@ -533,6 +537,7 @@ def _codex_pool_snapshot(entries, rows, queried):
 
 def _codex_pool_exhausted_row(entry, index):
     label = _safe_entry_label(entry, index)
+    retry_after = _entry_pool_retry_after(entry)
     return {
         "label": label,
         "status": "exhausted",
@@ -540,6 +545,7 @@ def _codex_pool_exhausted_row(entry, index):
         "windows": [],
         "details": [],
         "unavailable_reason": _entry_pool_exhausted_reason(entry),
+        "retry_after": retry_after,
         "fetched_at": None,
     }
 

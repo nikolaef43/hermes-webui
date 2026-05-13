@@ -6,6 +6,7 @@ import base64
 import json
 import inspect
 import os
+import re
 import sys
 import threading
 import types
@@ -442,6 +443,7 @@ def test_codex_account_usage_subprocess_reports_read_only_credential_pool(monkey
                 "windows": [],
                 "details": [],
                 "unavailable_reason": "Credential pool marked this credential exhausted; retry after 2030-03-17T18:46:40Z.",
+                "retry_after": "2030-03-17T18:46:40Z",
                 "fetched_at": None,
             },
         ],
@@ -756,6 +758,12 @@ def test_account_usage_pool_payload_round_trips_to_provider_quota_status():
             "failed_credentials": 0,
             "credentials": [
                 {"label": "Credential 1", "status": "available", "windows": []},
+                {
+                    "label": "Credential 2",
+                    "status": "exhausted",
+                    "windows": [],
+                    "retry_after": "2030-03-17T18:46:40Z",
+                },
             ],
         },
     }
@@ -1151,12 +1159,12 @@ def test_provider_quota_card_is_rendered_in_providers_panel():
     assert "_fetchProviderQuotaStatus(false)" in panels
     assert "'/api/provider/quota'" in panels
     assert "function _buildProviderQuotaCard" in panels
-    assert "Active provider quota" in panels
+    assert "provider_quota_title" in panels
     assert "provider-quota-card" in panels
     assert "account_limits" in panels
     assert "remaining_percent" in panels
     assert "provider-quota-details" in panels
-    assert "Credential pool" in panels
+    assert "provider_quota_credential_pool" in panels
     assert "provider-quota-pool-row" in panels
     assert "_buildProviderQuotaPoolBreakdown" in panels
     assert "_providerQuotaPoolShouldDefaultOpen" in panels
@@ -1166,7 +1174,11 @@ def test_provider_quota_card_is_rendered_in_providers_panel():
     assert "count>0&&count<=3" in panels
     assert "status.status==='available'||accountLimits.pool" in panels
     assert "provider-quota-window-detail" in panels
-    assert "5-hour limit" in panels
+    assert "provider_quota_session_limit" in panels
+    assert "provider_quota_weekly_limit" in panels
+    assert "_providerQuotaUnavailableReason" in panels
+    assert "provider_quota_retry_after" in panels
+    assert "accountLimits.details)&&!accountLimits.pool" in panels
 
 
 def test_provider_quota_card_has_manual_refresh_control():
@@ -1177,11 +1189,24 @@ def test_provider_quota_card_has_manual_refresh_control():
     assert "refresh=1" in panels
     assert "cache:'no-store'" in panels
     assert "data-provider-quota-refresh" in panels
-    assert "Refresh usage" in panels
-    assert "Provider usage refreshed" in panels
-    assert "Provider usage refresh failed" in panels
+    assert "provider_quota_refresh_usage" in panels
+    assert "provider_quota_refresh_succeeded" in panels
+    assert "provider_quota_refresh_failed" in panels
     assert "card.isConnected&&button" in panels
-    assert "Last checked" in panels
+    assert "provider_quota_last_checked" in panels
+
+
+def test_provider_quota_i18n_keys_exist_for_all_locales():
+    """Provider quota UI keys must be present in every locale block."""
+    i18n = (ROOT / "static" / "i18n.js").read_text(encoding="utf-8")
+    locale_count = len(
+        re.findall(r"^  (?:[A-Za-z_][A-Za-z0-9_]*|'[^']+'):\s*\{", i18n, re.MULTILINE)
+    )
+    keys = sorted(set(re.findall(r"provider_quota_[a-z0-9_]+", (ROOT / "static" / "panels.js").read_text(encoding="utf-8"))))
+    assert locale_count >= 1
+    assert "provider_quota_retry_after" in keys
+    for key in keys:
+        assert len(re.findall(rf"^\s+{re.escape(key)}:", i18n, re.MULTILINE)) == locale_count, key
 
 
 def test_provider_quota_styles_exist():
