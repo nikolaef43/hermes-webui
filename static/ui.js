@@ -3995,7 +3995,7 @@ async function showWhatsNewSummary(){
     _renderUpdateSummaryPanel({
       summary_sections:[
         {title:"What you'll notice",items:['Could not generate the summary right now.']},
-        {title:'Worth knowing',items:['The regular diff comparison is still available below for exact details.']},
+        {title:'Worth knowing',items:['Try again later, or use the comparison links below for the raw update details.']},
       ],
     },data);
   }

@@ -396,16 +396,36 @@ def _fallback_update_bullets(details: list[dict]) -> list[str]:
     return bullets or ['Updates are available.']
 
 
+def _worth_knowing_bullets(details: list[dict]) -> list[str]:
+    targets = [
+        f"{item.get('label') or item.get('name') or 'Hermes'} ({item.get('behind') or 0} update{'s' if (item.get('behind') or 0) != 1 else ''})"
+        for item in details
+        if item.get('behind')
+    ]
+    if len(targets) > 1:
+        return ['This summary combines updates from ' + ' and '.join(targets) + '.']
+    if targets:
+        return ['This summary covers ' + targets[0] + '.']
+    return ['No update details were available to summarize.']
+
+
 def _format_update_summary_sections(summary_text: str, details: list[dict]) -> tuple[list[dict], str]:
     bullets = _summary_bullets_from_text(summary_text, fallback_items=_fallback_update_bullets(details))
+    if len(bullets) > 1:
+        notice_items = bullets[:3]
+        worth_items = bullets[3:] or bullets[1:]
+    else:
+        notice_items = bullets
+        worth_items = []
+    worth_items = worth_items[:2] or _worth_knowing_bullets(details)
     sections = [
         {
             'title': "What you'll notice",
-            'items': bullets,
+            'items': notice_items,
         },
         {
             'title': 'Worth knowing',
-            'items': ['The regular diff comparison is still available below for exact details.'],
+            'items': worth_items,
         },
     ]
     lines = []
@@ -431,7 +451,7 @@ def _update_summary_prompt(details: list[dict]) -> tuple[str, str]:
     user_lines = [
         "Summarize these available updates as 3-5 concise bullets.",
         "Use everyday language and explain visible behavior changes, not code mechanics.",
-        "Return only bullets; the WebUI will add the fixed section headings and diff note.",
+        "Return only bullets; the WebUI will add the fixed section headings separately.",
         "",
     ]
     for item in details:

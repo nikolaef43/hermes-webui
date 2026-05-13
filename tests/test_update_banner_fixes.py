@@ -794,10 +794,10 @@ class TestWhatsNewSummaryToggle:
         assert result['summary_sections'][0]['title'] == "What you'll notice"
         assert result['summary_sections'][1]['title'] == 'Worth knowing'
         assert result['summary_sections'][0]['items']
-        assert result['summary_sections'][1]['items'] == [
-            'The regular diff comparison is still available below for exact details.'
-        ]
+        assert result['summary_sections'][1]['items']
+        assert 'regular diff comparison' not in ' '.join(result['summary_sections'][1]['items']).lower()
         assert 'What you\'ll notice' in result['summary']
+        assert 'Worth knowing' in result['summary']
         assert '- The settings panel is easier to understand.' in result['summary']
 
     def test_update_summary_cache_reuses_same_update_summary(self):
