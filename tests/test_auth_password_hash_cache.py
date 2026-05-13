@@ -42,6 +42,8 @@ import api.auth
 importlib.reload(api.auth)
 auth = api.auth
 
+import api.config as config
+
 
 class TestPasswordHashCache(unittest.TestCase):
     """Verify that get_password_hash() caches after first computation."""
@@ -235,6 +237,56 @@ class TestPasswordHashCacheConcurrency(unittest.TestCase):
 
         self.assertTrue(all(r is None for r in results),
                         "All threads must see None when auth is disabled")
+
+
+class TestPasswordCacheInvalidation(unittest.TestCase):
+    """Verify that save_settings() invalidates the password hash cache.
+
+    Changing the password via the Settings panel must take effect immediately
+    in the running process — without a restart.
+    """
+
+    def setUp(self):
+        auth._AUTH_HASH_LOCK = threading.Lock()
+        auth._AUTH_HASH_COMPUTED = False
+        auth._AUTH_HASH_CACHE = None
+        os.environ.pop('HERMES_WEBUI_PASSWORD', None)
+        # Start with a clean settings.json so write tests are isolated
+        self._sf = config.SETTINGS_FILE
+        self._backup = None
+        if self._sf.exists():
+            self._backup = self._sf.read_text(encoding='utf-8')
+            self._sf.unlink()
+
+    def tearDown(self):
+        if self._backup is not None:
+            self._sf.write_text(self._backup, encoding='utf-8')
+        auth._invalidate_password_hash_cache()
+        os.environ.pop('HERMES_WEBUI_PASSWORD', None)
+
+    def test_set_password_takes_effect_without_restart(self):
+        config.save_settings({"_set_password": "first"})
+        self.assertTrue(auth.verify_password("first"))
+
+        config.save_settings({"_set_password": "second"})
+        self.assertFalse(auth.verify_password("first"),
+                         "stale hash still accepted after password change")
+        self.assertTrue(auth.verify_password("second"))
+
+    def test_clear_password_takes_effect_without_restart(self):
+        config.save_settings({"_set_password": "secret"})
+        self.assertTrue(auth.is_auth_enabled())
+
+        config.save_settings({"_clear_password": True})
+        self.assertFalse(auth.is_auth_enabled(),
+                         "auth still enabled after clear")
+        self.assertFalse(auth.verify_password("secret"))
+
+    def test_cache_repopulates_after_invalidation(self):
+        config.save_settings({"_set_password": "pw"})
+        auth.get_password_hash()
+        auth._invalidate_password_hash_cache()
+        self.assertTrue(auth.verify_password("pw"))
 
 
 if __name__ == "__main__":
