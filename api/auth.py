@@ -329,7 +329,7 @@ def create_session() -> str:
     token = secrets.token_hex(32)
     _sessions[token] = time.time() + _resolve_session_ttl()
     _save_sessions(_sessions)
-    sig = hmac.new(_signing_key(), token.encode(), hashlib.sha256).hexdigest()[:32]
+    sig = hmac.new(_signing_key(), token.encode(), hashlib.sha256).hexdigest()
     return f"{token}.{sig}"
 
 
@@ -349,8 +349,14 @@ def verify_session(cookie_value) -> bool:
         return False
     _prune_expired_sessions()  # lazy cleanup on every verification attempt
     token, sig = cookie_value.rsplit('.', 1)
-    expected_sig = hmac.new(_signing_key(), token.encode(), hashlib.sha256).hexdigest()[:32]
-    if not hmac.compare_digest(sig, expected_sig):
+    full_sig = hmac.new(_signing_key(), token.encode(), hashlib.sha256).hexdigest()
+    # Accept both new (64-char) and legacy (32-char truncated) signatures so
+    # existing sessions survive the upgrade without a forced global logout.
+    # The legacy branch can be removed once session TTLs have expired (~30 days).
+    valid = hmac.compare_digest(sig, full_sig) or (
+        len(sig) == 32 and hmac.compare_digest(sig, full_sig[:32])
+    )
+    if not valid:
         return False
     expiry = _sessions.get(token)
     if not expiry or time.time() > expiry:
@@ -433,6 +439,29 @@ def check_auth(handler, parsed) -> bool:
     return False
 
 
+def _is_secure_context(handler=None) -> bool:
+    """Return True if cookies should carry the Secure flag.
+
+    Behaviour is overridable via HERMES_WEBUI_SECURE env var for
+    reverse-proxy setups where TLS terminates at a frontend proxy
+    (nginx, Cloudflare, etc.) and Python only sees plain HTTP.
+    1/true/yes → force Secure on; 0/false/no → force Secure off.
+    When unset, fall back to heuristics: direct TLS socket (getpeercert)
+    or X-Forwarded-Proto header from the request.
+    """
+    env = os.getenv('HERMES_WEBUI_SECURE', '').strip().lower()
+    if env in ('1', 'true', 'yes'):
+        return True
+    if env in ('0', 'false', 'no'):
+        return False
+    if handler is not None:
+        if getattr(handler.request, 'getpeercert', None) is not None:
+            return True
+        if handler.headers.get('X-Forwarded-Proto', '') == 'https':
+            return True
+    return False
+
+
 def set_auth_cookie(handler, cookie_value) -> None:
     """Set the auth cookie on the response."""
     cookie = http.cookies.SimpleCookie()
@@ -441,8 +470,7 @@ def set_auth_cookie(handler, cookie_value) -> None:
     cookie[COOKIE_NAME]['samesite'] = 'Lax'
     cookie[COOKIE_NAME]['path'] = '/'
     cookie[COOKIE_NAME]['max-age'] = str(_resolve_session_ttl())
-    # Set Secure flag when connection is HTTPS
-    if getattr(handler.request, 'getpeercert', None) is not None or handler.headers.get('X-Forwarded-Proto', '') == 'https':
+    if _is_secure_context(handler):
         cookie[COOKIE_NAME]['secure'] = True
     handler.send_header('Set-Cookie', cookie[COOKIE_NAME].OutputString())
 
