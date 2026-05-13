@@ -4669,10 +4669,18 @@ def cancel_stream(stream_id: str) -> bool:
                 _partial_already_present = False
                 if _stripped:
                     for _m in _cs.messages:
-                        if not isinstance(_m, dict) or _m.get('role') != 'assistant' or _m.get('_error'):
+                        # Stage-350 Opus SHOULD-FIX (#2151): only dedup
+                        # against actual prior _partial markers from the
+                        # same stream, with exact content match. The original
+                        # substring check (`_stripped in _existing or
+                        # _existing in _stripped`) was too broad — any short
+                        # prior assistant reply (e.g. "OK", "Here is the
+                        # answer:") becomes a substring of many later partial
+                        # bodies and could silently drop the new partial,
+                        # resurrecting the #893 data-loss bug on long sessions.
+                        if not isinstance(_m, dict) or not _m.get('_partial'):
                             continue
-                        _existing = str(_m.get('content') or '').strip()
-                        if _existing and (_stripped in _existing or _existing in _stripped):
+                        if str(_m.get('content') or '').strip() == _stripped:
                             _partial_already_present = True
                             break
                 if (_stripped or _has_reasoning or _has_tools) and not _partial_already_present:
