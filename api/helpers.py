@@ -112,7 +112,8 @@ MAX_BODY_BYTES = 20 * 1024 * 1024  # 20MB limit for non-upload POST bodies
 
 def _build_redact_fn():
     """Return a redactor backed by hermes-agent plus local fallback patterns."""
-    # Minimal fallback covering the most common credential prefixes.
+    # Fallback mirrors the agent's known credential prefixes so WebUI API
+    # responses remain a hard redaction boundary even without hermes-agent.
     # Keep this active even when hermes-agent is importable so API responses do
     # not regress if the agent redactor misses a token shape.
     _CRED_RE = _re.compile(
@@ -124,10 +125,34 @@ def _build_redact_fn():
         r"|ghu_[A-Za-z0-9]{10,}"          # GitHub user-to-server token
         r"|ghs_[A-Za-z0-9]{10,}"          # GitHub server-to-server token
         r"|ghr_[A-Za-z0-9]{10,}"          # GitHub refresh token
+        r"|xox[baprs]-[A-Za-z0-9-]{10,}"  # Slack tokens
+        r"|AIza[A-Za-z0-9_-]{30,}"        # Google API keys
+        r"|pplx-[A-Za-z0-9]{10,}"         # Perplexity
+        r"|fal_[A-Za-z0-9_-]{10,}"        # Fal.ai
+        r"|fc-[A-Za-z0-9]{10,}"           # Firecrawl
+        r"|bb_live_[A-Za-z0-9_-]{10,}"    # BrowserBase
+        r"|gAAAA[A-Za-z0-9_=-]{20,}"      # Codex encrypted tokens
         r"|AKIA[A-Z0-9]{16}"              # AWS Access Key ID
-        r"|xox[baprs]-[A-Za-z0-9-]{10,}" # Slack tokens
-        r"|hf_[A-Za-z0-9]{10,}"          # HuggingFace token
-        r"|SG\.[A-Za-z0-9_-]{10,}"       # SendGrid API key
+        r"|sk_live_[A-Za-z0-9]{10,}"      # Stripe secret key (live)
+        r"|sk_test_[A-Za-z0-9]{10,}"      # Stripe secret key (test)
+        r"|rk_live_[A-Za-z0-9]{10,}"      # Stripe restricted key
+        r"|SG\.[A-Za-z0-9_-]{10,}"        # SendGrid API key
+        r"|hf_[A-Za-z0-9]{10,}"           # HuggingFace token
+        r"|r8_[A-Za-z0-9]{10,}"           # Replicate API token
+        r"|npm_[A-Za-z0-9]{10,}"          # npm access token
+        r"|pypi-[A-Za-z0-9_-]{10,}"       # PyPI API token
+        r"|dop_v1_[A-Za-z0-9]{10,}"       # DigitalOcean PAT
+        r"|doo_v1_[A-Za-z0-9]{10,}"       # DigitalOcean OAuth
+        r"|am_[A-Za-z0-9_-]{10,}"         # AgentMail API key
+        r"|sk_[A-Za-z0-9_]{10,}"          # ElevenLabs TTS key
+        r"|tvly-[A-Za-z0-9]{10,}"         # Tavily search API key
+        r"|exa_[A-Za-z0-9]{10,}"          # Exa search API key
+        r"|gsk_[A-Za-z0-9]{10,}"          # Groq Cloud API key
+        r"|syt_[A-Za-z0-9]{10,}"          # Matrix access token
+        r"|retaindb_[A-Za-z0-9]{10,}"     # RetainDB API key
+        r"|hsk-[A-Za-z0-9]{10,}"          # Hindsight API key
+        r"|mem0_[A-Za-z0-9]{10,}"         # Mem0 Platform API key
+        r"|brv_[A-Za-z0-9]{10,}"          # ByteRover API key
         r")(?![A-Za-z0-9_-])"
     )
     _AUTH_HDR_RE = _re.compile(r"(Authorization:\s*Bearer\s+)(\S+)", _re.IGNORECASE)
@@ -193,9 +218,30 @@ _SENSITIVE_CASE_MARKERS = (
     "xoxp-",
     "xoxr-",
     "xoxs-",
-    "hf_",
-    "SG.",
     "AIza",
+    "pplx-",
+    "fal_",
+    "fc-",
+    "bb_live_",
+    "gAAAA",
+    "sk_live_",
+    "sk_test_",
+    "rk_live_",
+    "SG.",
+    "hf_",
+    "r8_",
+    "npm_",
+    "pypi-",
+    "dop_v1_",
+    "doo_v1_",
+    "am_",
+    "sk_",
+    "tvly-",
+    "exa_",
+    "gsk_",
+    "syt_",
+    "retaindb_",
+    "hsk-",
     "mem0_",
     "brv_",
     "eyJ",

@@ -137,6 +137,57 @@ def test_redact_text_still_runs_full_redactor_for_sensitive_markers(monkeypatch)
     assert calls == [f"token={_FAKE_SK_KEY}"]
 
 
+@pytest.mark.parametrize("prefix,suffix", [
+    ("sk-", "TestCredential1234567890"),
+    ("ghp_", "TestCredential1234567890"),
+    ("github_pat_", "TestCredential_1234567890"),
+    ("gho_", "TestCredential1234567890"),
+    ("ghu_", "TestCredential1234567890"),
+    ("ghs_", "TestCredential1234567890"),
+    ("ghr_", "TestCredential1234567890"),
+    ("xoxb-", "TestCredential1234567890"),
+    ("xoxa-", "TestCredential1234567890"),
+    ("xoxp-", "TestCredential1234567890"),
+    ("xoxr-", "TestCredential1234567890"),
+    ("xoxs-", "TestCredential1234567890"),
+    ("AIza", "TestCredential1234567890abcdefghi"),
+    ("pplx-", "TestCredential1234567890"),
+    ("fal_", "TestCredential1234567890"),
+    ("fc-", "TestCredential1234567890"),
+    ("bb_live_", "TestCredential1234567890"),
+    ("gAAAA", "TestCredential1234567890abcd"),
+    ("AKIA", "TESTCREDENTIAL12"),
+    ("sk_" + "live_", "TestCredential1234567890"),
+    ("sk_" + "test_", "TestCredential1234567890"),
+    ("rk_" + "live_", "TestCredential1234567890"),
+    ("SG.", "TestCredential1234567890"),
+    ("hf_", "TestCredential1234567890"),
+    ("r8_", "TestCredential1234567890"),
+    ("npm_", "TestCredential1234567890"),
+    ("pypi-", "TestCredential1234567890"),
+    ("dop_v1_", "TestCredential1234567890"),
+    ("doo_v1_", "TestCredential1234567890"),
+    ("am_", "TestCredential1234567890"),
+    ("sk_", "TestCredential1234567890"),
+    ("tvly-", "TestCredential1234567890"),
+    ("exa_", "TestCredential1234567890"),
+    ("gsk_", "TestCredential1234567890"),
+    ("syt_", "TestCredential1234567890"),
+    ("retaindb_", "TestCredential1234567890"),
+    ("hsk-", "TestCredential1234567890"),
+    ("mem0_", "TestCredential1234567890"),
+    ("brv_", "TestCredential1234567890"),
+])
+def test_redact_text_prefilter_covers_known_prefixed_credentials(prefix, suffix):
+    """Every known prefix must still reach the hard redactor."""
+    import api.helpers as helpers
+
+    token = prefix + suffix
+    result = helpers._redact_text(f"credential={token}", _enabled=True)
+
+    assert token not in result
+
+
 def test_redact_value_works_with_legacy_agent_redact_signature(monkeypatch):
     """_redact_text must tolerate older redact_sensitive_text(text) signatures."""
     fake_agent = types.ModuleType("agent")
