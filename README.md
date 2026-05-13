@@ -370,7 +370,7 @@ Or using the agent venv explicitly:
 
 Tests run against an isolated server with a separate state directory.
 Production data and real cron jobs are never touched. Current snapshot:
-**5272 tests collected** across **483 test files**.
+**5303 tests collected** across **488 test files**.
 
 ---
 
@@ -492,33 +492,33 @@ Production data and real cron jobs are never touched. Current snapshot:
 ## Architecture
 
 ```
-server.py               HTTP routing shell + auth middleware (~435 lines)
+server.py               HTTP routing shell + auth middleware (~446 lines)
 api/
   auth.py               Optional password authentication, signed cookies (~366 lines)
-  config.py             Discovery, globals, model detection, reloadable config (~4136 lines)
+  config.py             Discovery, globals, model detection, reloadable config (~4139 lines)
   helpers.py            HTTP helpers, security headers (~302 lines)
   models.py             Session model + CRUD + CLI bridge (~1927 lines)
   onboarding.py         First-run onboarding wizard, OAuth provider support (~1002 lines)
   profiles.py           Profile state management, hermes_cli wrapper (~1056 lines)
-  routes.py             All GET + POST route handlers (~9630 lines)
+  routes.py             All GET + POST route handlers (~9772 lines)
   state_sync.py         /insights sync — message_count to state.db (~118 lines)
-  streaming.py          SSE engine, run_agent, cancel support (~4404 lines)
+  streaming.py          SSE engine, run_agent, cancel support (~4420 lines)
   updates.py            Self-update check and release notes (~545 lines)
   upload.py             Multipart parser, file upload handler (~284 lines)
   workspace.py          File ops, workspace helpers, git detection (~810 lines)
 static/
   index.html            HTML template (~1323 lines)
   style.css             All CSS incl. mobile responsive, themes (~3767 lines)
-  ui.js                 DOM helpers, renderMd, tool cards, context indicator (~7197 lines)
+  ui.js                 DOM helpers, renderMd, tool cards, context indicator (~7216 lines)
   workspace.js          File preview, file ops, git badge (~369 lines)
-  sessions.js           Session CRUD, collapsible groups, search, reload recovery (~3433 lines)
+  sessions.js           Session CRUD, collapsible groups, search, reload recovery (~3517 lines)
   messages.js           send(), SSE handlers, live streaming, session recovery (~2301 lines)
   panels.js             Cron, skills, memory, profiles, settings (~6480 lines)
   commands.js           Slash command autocomplete (~1302 lines)
   boot.js               Mobile nav, voice input, boot IIFE (~1607 lines)
 tests/
   conftest.py           Isolated test server/state fixtures
-  483 test files         5272 tests collected
+  488 test files         5303 tests collected
 Dockerfile              python:3.12-slim container image
 docker-compose.yml      Compose with named volume and optional auth
 .github/workflows/      CI: multi-arch Docker build + GitHub Release on tag

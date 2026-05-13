@@ -7,10 +7,10 @@
 >
 > Keep this document updated as architecture changes are made.
 
-> Current shipped build: `v0.51.52` (May 12, 2026).
-> Automated coverage: 5272 tests via `pytest tests/ --collect-only -q`. CI runs on Python 3.11, 3.12, and 3.13 against every PR.
+> Current shipped build: `v0.51.54` (May 13, 2026).
+> Automated coverage: 5303 tests via `pytest tests/ --collect-only -q`. CI runs on Python 3.11, 3.12, and 3.13 against every PR.
 >
-> Notable architecture state as of v0.51.52: the bootstrap and first-run onboarding flow own setup discovery; the default WebUI state directory is `~/.hermes/webui`; `ctl.sh` provides a daemon wrapper for homelab installs; chat streaming is still WebUI-owned SSE with stream-ownership guards, cancellation, async manual compression, and turn-journal audit plumbing; provider/model discovery is profile-aware with live-model cache invalidation and custom-provider scoping.
+> Notable architecture state as of v0.51.54: the bootstrap and first-run onboarding flow own setup discovery; the default WebUI state directory is `~/.hermes/webui`; `ctl.sh` provides a daemon wrapper for homelab installs; chat streaming is still WebUI-owned SSE with stream-ownership guards, cancellation, async manual compression, and turn-journal audit plumbing; provider/model discovery is profile-aware with live-model cache invalidation and custom-provider scoping.
 
 ---
 
@@ -43,7 +43,7 @@ actions. The topbar remains focused on conversation context and the workspace/fi
 ## 2. File Inventory
 
     <repo>/
-    server.py              Thin routing shell + HTTP Handler + auth middleware. ~435 lines.
+    server.py              Thin routing shell + HTTP Handler + auth middleware. ~446 lines.
                            Delegates all route handling to api/routes.py.
     bootstrap.py           One-shot launcher: optional agent install, deps, health wait, browser open.
     start.sh               Thin wrapper around bootstrap.py for shell-based startup.
@@ -53,30 +53,30 @@ actions. The topbar remains focused on conversation context and the workspace/fi
     api/
       __init__.py          Package marker
       auth.py              Optional password authentication, signed cookies (~366 lines)
-      config.py            Discovery, globals, model detection, reloadable config (~4136 lines)
+      config.py            Discovery, globals, model detection, reloadable config (~4139 lines)
       helpers.py           HTTP helpers: j(), bad(), require(), safe_resolve(), security headers (~302 lines)
       models.py            Session model + CRUD, per-session profile tracking (~1927 lines)
       profiles.py          Profile state management, hermes_cli wrapper (~1056 lines)
       onboarding.py        First-run onboarding status, real provider config writes, OAuth linking, and readiness detection (~1002 lines)
-      routes.py            All GET + POST route handlers (~9630 lines)
-      startup.py           Startup helpers: auto_install_agent_deps() (~50 lines)
-      streaming.py         SSE engine, run_agent, cancel, HERMES_HOME save/restore (~4404 lines)
+      routes.py            All GET + POST route handlers (~9772 lines)
+      startup.py           Startup helpers: auto_install_agent_deps() (~128 lines)
+      streaming.py         SSE engine, run_agent, cancel, HERMES_HOME save/restore (~4420 lines)
       upload.py            Multipart parser, file upload handler (~284 lines)
       workspace.py         File ops: list_dir, read_file_content, workspace helpers (~810 lines)
     static/
       index.html           HTML template (~1323 lines)
       style.css            All CSS incl. mobile responsive (~3767 lines)
-      ui.js                DOM helpers, renderMd, tool cards, model dropdown, file tree (~7197 lines)
+      ui.js                DOM helpers, renderMd, tool cards, model dropdown, file tree (~7216 lines)
       workspace.js         File preview, file ops, loadDir, clearPreview (~369 lines)
-      sessions.js          Session CRUD, list rendering, search, SVG icons, dropdown actions (~3433 lines)
+      sessions.js          Session CRUD, list rendering, search, SVG icons, dropdown actions (~3517 lines)
       messages.js          send(), SSE event handlers, approval, transcript (~2301 lines)
       panels.js            Cron, skills, memory, workspace, profiles, todo, settings (~6480 lines)
       commands.js          Slash command registry, parser, autocomplete dropdown (~1302 lines)
       onboarding.js        First-run wizard overlay, provider setup flow, and settings/workspace orchestration.
       boot.js              Event wiring, mobile sidebar/workspace nav, voice input, boot IIFE (~1607 lines)
     tests/
-      conftest.py          Isolated test server/state fixtures (~630 lines)
-      483 test files       5272 tests collected via pytest
+      conftest.py          Isolated test server/state fixtures (~644 lines)
+      488 test files       5303 tests collected via pytest
       test_regressions.py  Permanent regression gate (~976 lines)
     CONTRIBUTING.md        Contributor workflow and PR expectations.
     ROADMAP.md             Feature and product roadmap document.
@@ -370,9 +370,9 @@ highlighting), Mermaid.js (diagrams), xterm.js, and KaTeX assets loaded with the
 current static template's integrity/CSP assumptions.
 
 Core JS modules loaded by the app include:
-  1. ui.js         (~7197 lines) DOM helpers, renderMd, tool card rendering, global state
+  1. ui.js         (~7216 lines) DOM helpers, renderMd, tool card rendering, global state
   2. workspace.js  (~369 lines) File tree, preview, file operations
-  3. sessions.js  (~3433 lines) Session CRUD, list rendering, search, SVG icons, dropdown actions, project picker
+  3. sessions.js  (~3517 lines) Session CRUD, list rendering, search, SVG icons, dropdown actions, project picker
   4. messages.js  (~2301 lines) send(), SSE event handlers, approval, transcript
   5. panels.js    (~6480 lines) Cron, skills, memory, workspace, profiles, todo, settings
   6. commands.js  (~1302 lines) Slash command registry, parser, autocomplete dropdown
@@ -684,23 +684,23 @@ Split server.py into a proper package. Completed across Sprints 4-10.
 Current structure:
 
     <repo>/
-      server.py               Entry point + HTTP Handler dispatch (~435 lines)
+      server.py               Entry point + HTTP Handler dispatch (~446 lines)
       api/
         __init__.py
-        routes.py             All GET + POST route handlers (~9630 lines)
-        config.py             Configuration, constants, global state, model discovery (~4136 lines)
+        routes.py             All GET + POST route handlers (~9772 lines)
+        config.py             Configuration, constants, global state, model discovery (~4139 lines)
         helpers.py            HTTP helpers: j(), bad(), require(), safe_resolve() (~302 lines)
         models.py             Session model + CRUD (~1927 lines)
         workspace.py          File ops, workspace management (~810 lines)
         upload.py             Multipart parser, file upload handler (~284 lines)
-        streaming.py          SSE engine, run_agent, cancel support (~4404 lines)
+        streaming.py          SSE engine, run_agent, cancel support (~4420 lines)
       static/
         index.html            HTML document (served from disk)
         style.css             All CSS (~3767 lines)
         ui.js, workspace.js, sessions.js, messages.js, panels.js, commands.js, boot.js
       tests/
         conftest.py           Isolated test server/state fixtures
-        483 test files        5272 tests collected
+        488 test files        5303 tests collected
         test_regressions.py   Permanent regression gate
 
 Route extraction to api/routes.py completed in Sprint 11. server.py remains a
@@ -800,7 +800,7 @@ Optional password gate for non-SSH-tunnel deployments.
 
 ### Phase I: Test Infrastructure -- COMPLETE
 
-5272 tests across 483 test files + regression gates. The pytest fixture derives
+5303 tests across 488 test files + regression gates. The pytest fixture derives
 an isolated port and state directory from the repo path unless
 `HERMES_WEBUI_TEST_PORT` / `HERMES_WEBUI_TEST_STATE_DIR` pin them explicitly.
 Production data never touched.
