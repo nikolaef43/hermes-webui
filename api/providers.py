@@ -19,7 +19,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -141,7 +141,7 @@ _ACCOUNT_USAGE_SUBPROCESS_CODE = r"""
 import base64
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from urllib import request as urllib_request
 
@@ -384,13 +384,33 @@ def _safe_unavailable_reason(reason):
     return text[:180]
 
 
+def _entry_exhausted_ttl_seconds(error_code):
+    code = str(error_code or "").strip()
+    if code == "401":
+        return 5 * 60
+    return 60 * 60
+
+
+def _entry_pool_exhausted_until(entry):
+    if str(_entry_value(entry, "last_status") or "").strip().lower() != "exhausted":
+        return None
+    reset_at = _parse_dt(getattr(entry, "last_error_reset_at", None))
+    if reset_at is not None:
+        return reset_at
+    status_at = _parse_dt(getattr(entry, "last_status_at", None))
+    if status_at is None:
+        return None
+    return status_at + timedelta(seconds=_entry_exhausted_ttl_seconds(_entry_value(entry, "last_error_code")))
+
+
 def _entry_is_pool_exhausted(entry):
-    return str(_entry_value(entry, "last_status") or "").strip().lower() == "exhausted"
+    exhausted_until = _entry_pool_exhausted_until(entry)
+    return exhausted_until is not None and datetime.now(timezone.utc) < exhausted_until
 
 
 def _entry_pool_exhausted_reason(entry):
     code = _entry_value(entry, "last_error_code")
-    reset_at = _iso(_parse_dt(getattr(entry, "last_error_reset_at", None)))
+    reset_at = _iso(_entry_pool_exhausted_until(entry))
     reason = "Credential pool marked this credential exhausted"
     if code:
         reason += " after provider status " + code

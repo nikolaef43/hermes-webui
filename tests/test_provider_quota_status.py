@@ -328,6 +328,7 @@ def test_codex_account_usage_subprocess_reports_read_only_credential_pool(monkey
                     runtime_api_key=exhausted_token,
                     runtime_base_url="https://chatgpt.com/backend-api/codex",
                     last_status="exhausted",
+                    last_status_at=1_900_000_000,
                 ),
             ]
 
@@ -440,13 +441,90 @@ def test_codex_account_usage_subprocess_reports_read_only_credential_pool(monkey
                 "plan": None,
                 "windows": [],
                 "details": [],
-                "unavailable_reason": "Credential pool marked this credential exhausted.",
+                "unavailable_reason": "Credential pool marked this credential exhausted; retry after 2030-03-17T18:46:40Z.",
                 "fetched_at": None,
             },
         ],
     }
     assert primary_token not in output
     assert exhausted_token not in output
+
+
+def test_codex_account_usage_subprocess_retries_expired_pool_exhaustion(monkeypatch, capsys):
+    """Expired pool cooldowns should be probed instead of shown as still exhausted."""
+    import api.providers as providers
+
+    def b64url(payload: bytes) -> str:
+        return base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
+
+    token = ".".join((
+        b64url(b'{"alg":"none","typ":"JWT"}'),
+        b64url(json.dumps({
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "acct-expired",
+            },
+        }).encode("utf-8")),
+        b64url(b"signature"),
+    ))
+    seen = []
+
+    agent_mod = types.ModuleType("agent")
+    agent_mod.__path__ = []
+    account_usage_mod = types.ModuleType("agent.account_usage")
+    credential_pool_mod = types.ModuleType("agent.credential_pool")
+
+    def fake_fetch_account_usage(provider, *, base_url=None, api_key=None):
+        return None
+
+    class FakePool:
+        def entries(self):
+            return [
+                SimpleNamespace(
+                    label="Expired cooldown",
+                    runtime_api_key=token,
+                    runtime_base_url="https://chatgpt.com/backend-api/codex",
+                    last_status="exhausted",
+                    last_status_at=1,
+                    last_error_code=None,
+                    last_error_reset_at=None,
+                ),
+            ]
+
+        def select(self):
+            raise AssertionError("quota display must not rotate credential_pool selection")
+
+    def fake_load_pool(provider):
+        return FakePool()
+
+    def fake_urlopen(req, timeout):
+        seen.append(req.full_url)
+        payload = {
+            "plan_type": "team",
+            "rate_limit": {
+                "primary_window": {"used_percent": 10, "reset_at": "2030-03-17T17:30:00Z"},
+            },
+        }
+        return _FakeResponse(json.dumps(payload).encode("utf-8"))
+
+    account_usage_mod.fetch_account_usage = fake_fetch_account_usage
+    credential_pool_mod.load_pool = fake_load_pool
+    monkeypatch.setitem(sys.modules, "agent", agent_mod)
+    monkeypatch.setitem(sys.modules, "agent.account_usage", account_usage_mod)
+    monkeypatch.setitem(sys.modules, "agent.credential_pool", credential_pool_mod)
+    monkeypatch.setattr(providers.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(sys, "argv", ["quota-probe", "openai-codex", ""])
+
+    exec(providers._ACCOUNT_USAGE_SUBPROCESS_CODE, {"__name__": "__main__"})
+
+    output = capsys.readouterr().out.strip()
+    snapshot = json.loads(output)
+
+    assert seen == ["https://chatgpt.com/backend-api/wham/usage"]
+    assert snapshot["pool"]["queried_credentials"] == 1
+    assert snapshot["pool"]["exhausted_credentials"] == 0
+    assert snapshot["pool"]["credentials"][0]["status"] == "available"
+    assert snapshot["pool"]["credentials"][0]["unavailable_reason"] is None
+    assert token not in output
 
 
 
