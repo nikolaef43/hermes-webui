@@ -48,6 +48,39 @@ class TestNoRenameDuringCompression:
         )
 
 
+    def test_parent_session_id_stamped_unconditionally(self):
+        """Stage-353 Opus SHOULD-FIX: the continuation session's parent_session_id
+        must be stamped UNCONDITIONALLY to old_sid (the immediate predecessor).
+
+        The previous `if not s.parent_session_id` guard skipped the stamp on
+        fork-of-fork compressions (i.e. when the session already had a
+        parent_session_id from a prior /branch operation), so the continuation
+        would jump back to the original fork instead of the just-preserved
+        snapshot, losing access to the recoverable history in old_sid.json.
+
+        The fix removes the guard: continuation ALWAYS points to the preserved
+        snapshot. Traversal then walks new → old → old.parent → ... root.
+        """
+        # The guarded form is the bug; the unconditional form is the fix.
+        assert "if not s.parent_session_id:\n                        s.parent_session_id = old_sid" not in streaming_src, (
+            "Guarded parent_session_id stamping resurfaced — breaks fork-of-fork "
+            "lineage traversal after compression"
+        )
+
+    def test_old_session_parent_preserved_during_archive_save(self):
+        """Stage-353 Opus SHOULD-FIX: when preserving old_sid.json to disk, the
+        OLD session's parent_session_id must NOT be cleared.
+
+        Previous bug: code did `s.parent_session_id = None; s.save(); s.parent_session_id = _old_parent`.
+        The save persisted parent=None to disk; in-memory restoration didn't help.
+        Result: fork lineage badge ("Forked from X") disappeared on the old snapshot.
+        """
+        # The clearing pattern must be gone.
+        assert "s.parent_session_id = None" not in streaming_src, (
+            "Clearing parent_session_id before preservation save resurfaced — "
+            "breaks fork lineage on the old snapshot"
+        )
+
 class TestMergePreservesHistory:
     """_merge_display_messages_after_agent_result must preserve all previous
     display messages when compression returns only a marker."""

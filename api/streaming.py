@@ -3609,18 +3609,19 @@ def _run_agent_streaming(
                                 existing_msgs = -1
                             if len(s.messages) > existing_msgs:
                                 # In-memory messages are newer than the file — save.
+                                # Preserve s.parent_session_id as-is (do NOT clear it):
+                                # the OLD session's parent_session_id is its own
+                                # pre-existing lineage (e.g. a /branch fork's
+                                # parent_session_id back to the original).  We must
+                                # not overwrite that with None on disk.  Stage-353
+                                # Opus SHOULD-FIX: previous code cleared parent
+                                # before save then restored after — but the on-disk
+                                # copy persisted with parent=None, breaking
+                                # fork-of-fork lineage traversal.  (#2227 + #2223)
                                 saved_sid = s.session_id
                                 s.session_id = old_sid
                                 try:
-                                    # Temporarily restore old sid so save()
-                                    # writes to old_path.  Also stamp a
-                                    # parent_session_id linking back so lineage
-                                    # can be traced from the OLD session forward
-                                    # to the continuation session.
-                                    _old_parent = s.parent_session_id
-                                    s.parent_session_id = None
                                     s.save(touch_updated_at=False, skip_index=True)
-                                    s.parent_session_id = _old_parent
                                     logger.info(
                                         "Preserved pre-compression session %s (%d messages) to disk",
                                         old_sid, len(s.messages),
@@ -3631,10 +3632,16 @@ def _run_agent_streaming(
                                     s.session_id = saved_sid
                         except OSError:
                             logger.debug("Could not read old session file before preservation")
-                    # Set parent_session_id on the continuation session so the
-                    # frontend can traverse the lineage chain (old → new).
-                    if not s.parent_session_id:
-                        s.parent_session_id = old_sid
+                    # Always link the continuation session to its immediate predecessor
+                    # (the preserved snapshot).  This OVERRIDES any prior
+                    # parent_session_id because the new continuation IS the next link
+                    # in the chain: traversal walks new → old → old.parent → ... root.
+                    # Stage-353 Opus SHOULD-FIX: previous `if not s.parent_session_id`
+                    # guard skipped this stamp on fork-of-fork compressions, so a
+                    # subsequent traversal from the new continuation would jump
+                    # over the just-preserved snapshot back to the original fork
+                    # parent, losing access to the recoverable history in old_sid.json.
+                    s.parent_session_id = old_sid
                     with LOCK:
                         if old_sid in SESSIONS:
                             SESSIONS[new_sid] = SESSIONS.pop(old_sid)
