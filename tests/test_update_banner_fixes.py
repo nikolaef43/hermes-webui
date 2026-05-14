@@ -839,6 +839,51 @@ class TestWhatsNewSummaryToggle:
         assert second['summary'] == first['summary']
         assert second['cached'] is True
         assert changed['summary'] != first['summary']
+
+    def test_update_summary_cache_is_bounded_lru(self):
+        import api.updates as upd
+
+        upd._summary_cache.clear()
+        calls = []
+
+        def payload(n):
+            return {
+                'webui': {
+                    'behind': n + 1,
+                    'current_sha': f'old-{n}',
+                    'latest_sha': f'new-{n}',
+                    'compare_url': f'https://example.test/webui/{n}',
+                },
+            }
+
+        def fake_llm(_system, prompt):
+            calls.append(prompt)
+            return f'- Generated summary #{len(calls)}'
+
+        try:
+            for i in range(upd._SUMMARY_CACHE_MAX):
+                upd.summarize_update_payload(payload(i), llm_callback=fake_llm)
+
+            assert len(upd._summary_cache) == upd._SUMMARY_CACHE_MAX
+            assert len(calls) == upd._SUMMARY_CACHE_MAX
+
+            first_again = upd.summarize_update_payload(payload(0), llm_callback=fake_llm)
+            assert first_again['cached'] is True
+            assert len(calls) == upd._SUMMARY_CACHE_MAX
+
+            upd.summarize_update_payload(payload(upd._SUMMARY_CACHE_MAX), llm_callback=fake_llm)
+            assert len(upd._summary_cache) == upd._SUMMARY_CACHE_MAX
+
+            still_cached = upd.summarize_update_payload(payload(0), llm_callback=fake_llm)
+            assert still_cached['cached'] is True
+            assert len(calls) == upd._SUMMARY_CACHE_MAX + 1
+
+            evicted = upd.summarize_update_payload(payload(1), llm_callback=fake_llm)
+            assert evicted['cached'] is False
+            assert len(calls) == upd._SUMMARY_CACHE_MAX + 2
+        finally:
+            upd._summary_cache.clear()
+
     def test_update_summary_can_be_generated_per_target_and_cached_separately(self):
         import api.updates as upd
 
@@ -932,4 +977,3 @@ class TestCheckForUpdatesButton:
         assert count >= 5, (
             f"settings_check_now found in only {count} locale blocks (expected ≥5: en, ru, es, zh, zh-Hant)"
         )
-
