@@ -644,11 +644,26 @@ def test_100dvh_viewport_height():
         "style.css must use 100dvh for correct mobile viewport height (100vh hides content under address bar)"
 
 
-def test_pwa_viewport_fit_cover_enabled():
-    """Installed iOS PWAs need viewport-fit=cover for safe-area env values."""
+def test_pwa_viewport_fit_cover_couples_unconditional_safe_area_env_values():
+    """Safe-area env variables must stay coupled to viewport-fit=cover.
+
+    PR #1381 scoped the top inset because normal browser/webview chrome can
+    already reserve status-bar space. This PR applies the safe-area env()
+    values through variables unconditionally, which is safe only while the
+    page opts into cover-mode viewport geometry.
+    """
     assert 'viewport-fit=cover' in HTML, (
         "index.html viewport meta must include viewport-fit=cover so iOS PWA "
         "safe-area-inset values are available"
+    )
+    assert "--app-titlebar-safe-top:env(safe-area-inset-top" in CSS, (
+        "CSS uses the top safe-area env() value unconditionally through "
+        "--app-titlebar-safe-top, so the viewport-fit=cover contract must "
+        "be regression-tested beside it"
+    )
+    assert "--app-safe-bottom:env(safe-area-inset-bottom" in CSS, (
+        "CSS uses the bottom safe-area env() value unconditionally through "
+        "--app-safe-bottom, so the viewport-fit=cover contract must stay coupled"
     )
 
 
