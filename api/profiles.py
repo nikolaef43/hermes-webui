@@ -713,10 +713,21 @@ def profile_env_for_background_worker(
         return
 
     env_keys = set(runtime_env.keys()) | {"HERMES_HOME"}
-    with _ENV_LOCK:
-        old_env = {key: os.environ.get(key) for key in env_keys}
-        skill_home_snapshot = snapshot_skill_home_modules()
-        try:
+    # Stage-360 maintainer fix: narrow the _ENV_LOCK critical section to just
+    # the env mutation (and the env restoration). Pre-fix, this held _ENV_LOCK
+    # for the entire `yield` duration — i.e. the whole background worker's
+    # runtime (title generation, compression, update summary). That caused
+    # _ENV_LOCK to be held for many seconds, blocking ALL other sessions and
+    # surfacing as the QA `test_third_message_completes` timeout. The fix
+    # mirrors the narrow-lock pattern in _run_agent_streaming: acquire briefly
+    # to set env, run worker without holding the lock, reacquire to restore.
+    # See also QA `test_finally_restores_env_with_lock`.
+    skill_home_snapshot = None
+    old_env = {}
+    try:
+        with _ENV_LOCK:
+            old_env = {key: os.environ.get(key) for key in env_keys}
+            skill_home_snapshot = snapshot_skill_home_modules()
             os.environ.update(runtime_env)
             os.environ["HERMES_HOME"] = str(profile_home_path)
             try:
@@ -728,14 +739,16 @@ def profile_env_for_background_worker(
                     profile,
                     exc_info=True,
                 )
-            yield
-        finally:
+        yield
+    finally:
+        with _ENV_LOCK:
             for key, old_value in old_env.items():
                 if old_value is None:
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = old_value
-            restore_skill_home_modules(skill_home_snapshot)
+            if skill_home_snapshot is not None:
+                restore_skill_home_modules(skill_home_snapshot)
 
 
 def _set_hermes_home(home: Path):

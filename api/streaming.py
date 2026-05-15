@@ -41,7 +41,7 @@ from api.turn_journal import append_turn_journal_event_for_stream
 # concurrent runs of the SAME session, but two DIFFERENT sessions can still
 # interleave their os.environ writes. This global lock serializes the env
 # save/restore around the entire agent run.
-_ENV_LOCK = threading.RLock()
+_ENV_LOCK = threading.Lock()
 
 
 def _prewarm_skill_tool_modules():
