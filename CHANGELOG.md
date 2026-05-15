@@ -24,6 +24,8 @@
 
 ### Fixed
 
+- **PR #2317** (refs #2312) — Appearance boot reconciliation now treats explicit `light`, `dark`, and `system` localStorage theme values as user selections when a prior Settings autosave failed. Previously only `system` was considered explicit, so users who picked `light` on a server defaulted to `dark` (or vice versa) could still be reverted on refresh.
+
 - **PR #2275** by @ai-ag2026 — CLI/messaging continuation sessions (sessions stitched from a `parent_session_id` chain) now return their full transcript instead of an empty list. Pre-fix, `get_cli_session_messages()` called `_is_continuation_session()` while walking the parent chain, but `api/models.py` didn't import that helper. The exception was swallowed by `except Exception: return []`, so valid external sessions could fall through silently. Adds regression coverage that a stitched continuation chain returns a non-empty transcript.
 
 - **PR #2277** by @eleboucher — Rootless container runtimes (k8s `runAsNonRoot: true`, OpenShift restricted SCC, `docker --user`, rootless Podman) no longer hit a cascade of permission errors at startup. Pre-fix, the rootless branch skipped the root init phase entirely, but root init also did rsync, `/uv_cache` permissions, `~/hermeswebui` home directory creation, and `/workspace` writability. `docker_init.bash` now distinguishes "no root init available" from "root init available but skipped", running the work that doesn't need root in the rootless branch too.
