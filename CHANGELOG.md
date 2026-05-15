@@ -4,6 +4,8 @@
 
 ### Added
 
+- **PR #2332** by @Michaelyklam (refs #2290) — Cron run history/output cards now surface token/cost metadata when the underlying cron output markdown includes it. The backend parses optional model, token, cost, and duration frontmatter from cron output files and returns it from `/api/crons/history` and `/api/crons/run`; the Tasks panel renders a compact usage strip beside run rows and below expanded output without affecting older outputs that lack usage metadata.
+
 - **PR #2319** by @Michaelyklam — Chat file uploads now land in a session-scoped attachment inbox instead of cluttering the active workspace root. By default uploads are stored under `~/.hermes/webui/attachments/<session_id>/`; operators can override the root with `HERMES_WEBUI_ATTACHMENT_DIR`, and the agent still receives the absolute uploaded file path for context. Archive extraction stays workspace-scoped (it's an explicit workspace operation). README updated to document the new default location. **Stage-361 maintainer fix applied inline**: Opus advisor caught that `_build_native_multimodal_message` at `api/streaming.py:787` required uploads to be under `workspace_root`, which would have silently dropped every image upload for vision-capable models once the inbox moved outside the workspace. The fix adds `_attachment_root()` (from `api/upload.py`) as a second allowed location, with 3 regression tests covering the new code path AND verifying the original workspace + cross-root rejection paths still work.
 
 ### Fixed
