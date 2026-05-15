@@ -14,6 +14,8 @@
 
 ### Added
 
+- **PR #TBD** (refs #2247) — Chat file uploads now land in a session-scoped attachment inbox instead of cluttering the active workspace root. By default uploads are stored under `~/.hermes/webui/attachments/<session_id>/`; operators can override the root with `HERMES_WEBUI_ATTACHMENT_DIR`, and the agent still receives the absolute uploaded file path for context.
+
 - **PR #2287** by @mslovy (refs #2284) — Upload size limit is now runtime-configurable via the `HERMES_WEBUI_MAX_UPLOAD_MB` environment variable. Previously the effective 20 MB cap was hard-coded across multiple layers. Server-side upload limit moves to runtime config; browser-side preflight check stays aligned with the effective backend limit; archive extraction guard continues to scale with the same configured cap. New `_env_mb_bytes()` helper in `api/config.py` parses `HERMES_WEBUI_MAX_UPLOAD_MB`.
 
 - **PR #2291** by @linuxid10t — New "Nous Research" skin option in the Settings → Appearance picker, inspired by [nousresearch.com](https://nousresearch.com). Monospace typography, steel blue (#4682B4) accent, cool gray text, sharp 1-2px corners, thin dashed borders, technical aesthetic.
