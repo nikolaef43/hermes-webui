@@ -201,7 +201,7 @@ function syncWorkspacePanelUI(){
   const clearBtn=$('btnClearPreview');
   if(clearBtn){
     clearBtn.disabled=!isOpen;
-    _setButtonTooltip(clearBtn, hasPreview?'Close preview':'Hide workspace panel');
+    _setButtonTooltip(clearBtn, hasPreview?'Close preview':'Close');
     if(!isCompact) clearBtn.style.display='';
   }
 }

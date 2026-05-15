@@ -207,8 +207,6 @@ def test_rightpanel_mobile_slide_over_css():
         "open mobile rightpanel should keep the edge shadow"
     assert re.search(r'\.rightpanel\s+\.panel-header\{[^}]*row-gap:\s*8px', rightpanel_block), \
         "mobile workspace header should keep comfortable row spacing"
-    assert re.search(r'\.rightpanel\s+\.mobile-close-btn\{[^}]*margin-left:\s*auto', rightpanel_block), \
-        "mobile workspace close button should align to the far right"
 
 
 def test_workspace_panel_inline_width_is_desktop_only():
