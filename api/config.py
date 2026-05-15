@@ -925,6 +925,30 @@ def _normalize_base_url_for_match(value: object) -> str:
     return f"{scheme}://{netloc}{path}"
 
 
+def _custom_endpoint_slugs_for_base_url(value: object) -> set[str]:
+    """Return custom provider slugs that WebUI may derive from a base URL.
+
+    Model picker values for endpoint-discovered models have historically used
+    both ``custom:<host>:<port>`` and ``custom:<host>-<port>`` forms. When the
+    active config already names a local-server provider such as Ollama for that
+    same base URL, those endpoint slugs are just UI routing hints and should
+    resolve back to the configured provider rather than requiring a CUSTOM_* API
+    key.
+    """
+    url = str(value or "").strip().rstrip("/")
+    if not url:
+        return set()
+    parsed_url = urlparse(url if "://" in url else f"http://{url}")
+    host = (parsed_url.hostname or "").strip().lower()
+    if not host:
+        return set()
+    port = parsed_url.port
+    if port is None:
+        scheme = (parsed_url.scheme or "http").lower()
+        port = 443 if scheme == "https" else 80
+    return {f"custom:{host}:{port}", f"custom:{host}-{port}"}
+
+
 def _named_custom_provider_slug_for_base_url(
     base_url: object,
     config_obj: dict | None = None,
@@ -1681,6 +1705,13 @@ def resolve_model_provider(model_id: str) -> tuple:
                 and provider_hint not in _PROVIDER_DISPLAY
                 and not provider_hint.startswith("custom:")):
             provider_hint, bare_model = inner.split(":", 1)
+        if (
+            provider_hint.startswith("custom:")
+            and config_base_url
+            and _is_local_server_provider(config_provider)
+            and provider_hint.lower() in _custom_endpoint_slugs_for_base_url(config_base_url)
+        ):
+            return bare_model, config_provider, config_base_url
         return bare_model, provider_hint, _get_provider_base_url(provider_hint)
 
     if "/" in model_id:

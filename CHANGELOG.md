@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- LAN Ollama models selected from endpoint-discovered `custom:<host>-<port>` / `custom:<host>:<port>` picker entries now route through the configured `ollama` provider and base URL instead of surfacing a missing `CUSTOM_*_API_KEY` error. Refs #2271.
+
 - **PR #2279** by @franksong2702 (closes #2262 + refs #2168) — WebUI stream completion recovery gaps closed for both `notify_on_complete` background tasks and the preserved-task-list compression marker UI. Pre-fix, completions held in the agent process registry were never drained by the WebUI gateway session because the gateway session platform was unset. The fix routes the completion queue by process session key before injecting any notification into a WebUI turn. Separately, the preserved-task-list compression marker — an internal sentinel — was sometimes the only assistant text rendered after a context compression turn timed out, leaving a confusing "preserved tasks" message with no actual response. The frontend now suppresses the marker when it's the only assistant content and the run state is terminal.
 
 - **PR #2299** by @starship-s — Background workers (title generation, manual session compression, update-summary generation) now correctly inherit profile-scoped configuration when a profile-scoped chat triggers them. Pre-fix, those workers read default-profile configuration instead of the session/request profile, so auxiliary model routing silently used the wrong configured model or failed provider resolution entirely. The fix threads the active profile context through `_run_background_title_update`, `_run_background_title_refresh`, and the manual compression and update-summary helpers, with regression tests covering all three paths.
