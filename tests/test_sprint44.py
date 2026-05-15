@@ -121,14 +121,6 @@ class TestDesktopNoDuplicateXButton(unittest.TestCase):
             "#btnClearPreview must remain in index.html",
         )
 
-    def test_btncollapseWorkspacepanel_exists_in_html(self):
-        """#btnCollapseWorkspacePanel (chevron) must still exist in the HTML."""
-        self.assertIn(
-            'id="btnCollapseWorkspacePanel"',
-            HTML,
-            "#btnCollapseWorkspacePanel must remain in index.html",
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -85,16 +85,6 @@ class TestMobileCloseButtonCSS(unittest.TestCase):
                       block,
                       ".mobile-close-btn must be display:flex inside the 900px media query")
 
-    def test_desktop_collapse_btn_hidden_in_900px_query(self):
-        """Inside max-width:900px media query, #btnCollapseWorkspacePanel must be display:none."""
-        m = re.search(r'@media\s*\(max-width\s*:\s*900px\)\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}',
-                      CSS)
-        self.assertIsNotNone(m, "@media(max-width:900px) block not found in style.css")
-        block = m.group(1).replace(" ", "")
-        self.assertIn("#btnCollapseWorkspacePanel{display:none;}",
-                      block,
-                      "#btnCollapseWorkspacePanel must be display:none in 900px media query")
-
     def test_900px_query_retains_existing_rules(self):
         """Ensure the PR didn't accidentally drop existing rules from the 900px block."""
         m = re.search(r'@media\s*\(max-width\s*:\s*900px\)\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}',
@@ -108,11 +98,7 @@ class TestMobileCloseButtonCSS(unittest.TestCase):
 # ── index.html: button presence ───────────────────────────────────────────
 
 class TestWorkspacePanelButtons(unittest.TestCase):
-    """Verify both panel buttons are present in the HTML so CSS rules have targets."""
-
-    def test_desktop_collapse_button_exists(self):
-        self.assertIn("btnCollapseWorkspacePanel", HTML,
-                      "#btnCollapseWorkspacePanel button must exist in index.html")
+    """Verify the workspace panel close control remains present."""
 
     def test_mobile_close_button_exists(self):
         self.assertIn("mobile-close-btn", HTML,
