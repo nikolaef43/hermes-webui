@@ -42,6 +42,24 @@ _tls = threading.local()
 _SKILL_HOME_MODULES = ("tools.skills_tool", "tools.skill_manager_tool")
 
 
+def snapshot_skill_home_modules() -> dict[str, dict[str, object]]:
+    """Snapshot imported skill-module path globals before a temporary patch."""
+    snapshot: dict[str, dict[str, object]] = {}
+    for module_name in _SKILL_HOME_MODULES:
+        module = sys.modules.get(module_name)
+        if module is None:
+            snapshot[module_name] = {"module_present": False}
+            continue
+        snapshot[module_name] = {
+            "module_present": True,
+            "has_HERMES_HOME": hasattr(module, "HERMES_HOME"),
+            "HERMES_HOME": getattr(module, "HERMES_HOME", None),
+            "has_SKILLS_DIR": hasattr(module, "SKILLS_DIR"),
+            "SKILLS_DIR": getattr(module, "SKILLS_DIR", None),
+        }
+    return snapshot
+
+
 def patch_skill_home_modules(home: Path) -> None:
     """Patch imported skill modules that cache HERMES_HOME at import time."""
     for module_name in _SKILL_HOME_MODULES:
@@ -53,6 +71,37 @@ def patch_skill_home_modules(home: Path) -> None:
             module.SKILLS_DIR = home / "skills"
         except AttributeError:
             logger.debug("Failed to patch %s module", module_name)
+
+
+def restore_skill_home_modules(snapshot: dict[str, dict[str, object]]) -> None:
+    """Restore skill-module globals captured by snapshot_skill_home_modules()."""
+    for module_name, values in snapshot.items():
+        module = sys.modules.get(module_name)
+        if not values.get("module_present"):
+            if module is not None:
+                sys.modules.pop(module_name, None)
+                parent_name, _, child_name = module_name.rpartition(".")
+                parent = sys.modules.get(parent_name)
+                if parent is not None:
+                    try:
+                        delattr(parent, child_name)
+                    except AttributeError:
+                        pass
+            continue
+        if module is None:
+            continue
+        for attr in ("HERMES_HOME", "SKILLS_DIR"):
+            has_attr = bool(values.get(f"has_{attr}"))
+            try:
+                if has_attr:
+                    setattr(module, attr, values.get(attr))
+                else:
+                    try:
+                        delattr(module, attr)
+                    except AttributeError:
+                        pass
+            except AttributeError:
+                logger.debug("Failed to restore %s.%s", module_name, attr)
 
 
 def _unwrap_profile_home_to_base(home: Path) -> Path:
