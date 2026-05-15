@@ -48,6 +48,12 @@
 
 - **PR #2165** by @starship-s — Pooled OpenAI Codex quota status surfaced in the Providers panel. Collapsed view shows "Best of N" pool summary (available / exhausted / failed / checked counts); expandable per-credential rows. Concurrent probing capped at `min(_CODEX_POOL_MAX_WORKERS=6, len(probe_items))`. Exhausted credentials NOT re-probed during cooldown. Manual refresh = "probe now", but transient `None` probe results are NOT cached (preserves last-known-good warm snapshot); only known-exhausted snapshot objects are cached. JWT decode (`_decode_jwt_claims_unverified`) is documented as classification-only (Codex OAuth JWT vs raw OpenAI API key), explicitly NOT for authorization. Per-row plan labels only shown when verified account-limit data is available. 32-test regression suite + 11-locale i18n parity assertion.
 
+### Fixed
+
+- WebUI agent turns now inherit `HERMES_SESSION_PLATFORM=webui` and drain matching `notify_on_complete` background-process completions into the next model input. Completion events are filtered by the process session key before delivery, so another tab/session's background process output remains queued for its owner instead of being injected into the wrong conversation.
+
+- Marker-only preserved-task-list compression sentinels no longer render as standalone assistant responses after stream recovery or timeout paths. If the frontend receives only that internal marker as assistant content, it replaces it with an explicit "No response received after context compression" error and shows an error toast.
+
 ## [v0.51.64] — 2026-05-14 — Release AN (stage-357 — 3-PR small batch — docker_init k8s whoami fallback + PWA manifest session routes (closes #2226) + aux title test coverage)
 
 ### Fixed

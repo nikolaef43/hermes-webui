@@ -582,9 +582,96 @@ def _build_agent_thread_env(profile_runtime_env: dict | None, workspace: str, se
         'TERMINAL_CWD': str(workspace),
         'HERMES_EXEC_ASK': '1',
         'HERMES_SESSION_KEY': session_id,
+        'HERMES_SESSION_ID': session_id,
+        'HERMES_SESSION_PLATFORM': 'webui',
         'HERMES_HOME': profile_home,
     })
     return env
+
+
+def _format_process_notification(evt: dict) -> str:
+    """Format a completed background process notification for agent input."""
+    if not isinstance(evt, dict):
+        return ''
+    if evt.get('type') != 'completion':
+        return ''
+    _sid = evt.get('session_id', '')
+    _cmd = evt.get('command', '')
+    _exit = evt.get('exit_code', '')
+    _out = evt.get('output') or ''
+    if len(_out) > 4000:
+        _out = _out[:4000] + '\n... (truncated)'
+    return (
+        f"[IMPORTANT: Background process {_sid} completed (exit code {_exit}).\n"
+        f"Command: {_cmd}\n"
+        f"Output:\n{_out}]"
+    )
+
+
+def _mark_process_completion_consumed(process_registry, process_id: str) -> None:
+    """Best-effort bridge to the agent registry's private completion marker."""
+    try:
+        with process_registry._lock:
+            process_registry._completion_consumed.add(process_id)
+    except Exception:
+        logger.debug("Failed to mark process completion consumed", exc_info=True)
+
+
+def _drain_webui_process_notifications(session_id: str) -> list[str]:
+    """Return completion notifications that belong to this WebUI session.
+
+    The agent registry completion queue is process-wide and events do not carry
+    the WebUI session key directly. Look up the live process session before
+    delivery so completions from other tabs remain queued for their owners.
+    """
+    if not session_id:
+        return []
+    try:
+        from tools.process_registry import process_registry
+    except Exception:
+        return []
+
+    notifications: list[str] = []
+    skipped_events: list[dict] = []
+    completion_queue = getattr(process_registry, 'completion_queue', None)
+    if completion_queue is None:
+        return []
+
+    while True:
+        try:
+            evt = completion_queue.get_nowait()
+        except queue.Empty:
+            break
+        except Exception:
+            logger.debug("Failed to drain process completion queue", exc_info=True)
+            break
+
+        evt_sid = str(evt.get('session_id') or '') if isinstance(evt, dict) else ''
+        if not evt_sid:
+            skipped_events.append(evt)
+            continue
+        try:
+            if process_registry.is_completion_consumed(evt_sid):
+                continue
+            proc = process_registry.get(evt_sid)
+        except Exception:
+            proc = None
+        if getattr(proc, 'session_key', None) != session_id:
+            skipped_events.append(evt)
+            continue
+
+        notification = _format_process_notification(evt)
+        if notification:
+            notifications.append(notification)
+            _mark_process_completion_consumed(process_registry, evt_sid)
+
+    for evt in skipped_events:
+        try:
+            completion_queue.put(evt)
+        except Exception:
+            logger.debug("Failed to requeue process completion event", exc_info=True)
+            break
+    return notifications
 
 
 def _attachment_name(att) -> str:
@@ -2376,6 +2463,8 @@ def _run_agent_streaming(
     old_cwd = None
     old_exec_ask = None
     old_session_key = None
+    old_session_id = None
+    old_session_platform = None
     old_hermes_home = None
     old_profile_env = {}
 
@@ -2626,11 +2715,15 @@ def _run_agent_streaming(
             old_cwd = os.environ.get('TERMINAL_CWD')
             old_exec_ask = os.environ.get('HERMES_EXEC_ASK')
             old_session_key = os.environ.get('HERMES_SESSION_KEY')
+            old_session_id = os.environ.get('HERMES_SESSION_ID')
+            old_session_platform = os.environ.get('HERMES_SESSION_PLATFORM')
             old_hermes_home = os.environ.get('HERMES_HOME')
             os.environ.update(_profile_runtime_env)
             os.environ['TERMINAL_CWD'] = str(s.workspace)
             os.environ['HERMES_EXEC_ASK'] = '1'
             os.environ['HERMES_SESSION_KEY'] = session_id
+            os.environ['HERMES_SESSION_ID'] = session_id
+            os.environ['HERMES_SESSION_PLATFORM'] = 'webui'
             if _profile_home:
                 os.environ['HERMES_HOME'] = _profile_home
                 # Patch module-level caches to match the active profile.
@@ -3382,7 +3475,11 @@ def _run_agent_streaming(
             )
             _ckpt_thread.start()
 
-            user_message = _build_native_multimodal_message(workspace_ctx, msg_text, attachments, workspace, cfg=_cfg)
+            _process_notifications = _drain_webui_process_notifications(session_id)
+            _agent_msg_text = msg_text
+            if _process_notifications:
+                _agent_msg_text = "\n\n".join([*_process_notifications, msg_text]).strip()
+            user_message = _build_native_multimodal_message(workspace_ctx, _agent_msg_text, attachments, workspace, cfg=_cfg)
             result = agent.run_conversation(
                 user_message=user_message,
                 system_message=workspace_system_msg,
@@ -4272,6 +4369,10 @@ def _run_agent_streaming(
                 else: os.environ['HERMES_EXEC_ASK'] = old_exec_ask
                 if old_session_key is None: os.environ.pop('HERMES_SESSION_KEY', None)
                 else: os.environ['HERMES_SESSION_KEY'] = old_session_key
+                if old_session_id is None: os.environ.pop('HERMES_SESSION_ID', None)
+                else: os.environ['HERMES_SESSION_ID'] = old_session_id
+                if old_session_platform is None: os.environ.pop('HERMES_SESSION_PLATFORM', None)
+                else: os.environ['HERMES_SESSION_PLATFORM'] = old_session_platform
                 if old_hermes_home is None: os.environ.pop('HERMES_HOME', None)
                 else: os.environ['HERMES_HOME'] = old_hermes_home
 
