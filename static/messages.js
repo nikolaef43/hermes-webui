@@ -601,6 +601,7 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
 
   function _reattachOrRestoreAfterDeferredStreamError(){
     if(_terminalStateReached||_streamFinalized) return;
+    if((S.session&&S.session.session_id)!==activeSid) return;
     (async()=>{
       try{
         if(streamId){

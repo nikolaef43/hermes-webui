@@ -4628,6 +4628,12 @@ def handle_post(handler, parsed) -> bool:
             p.with_suffix('.json.bak').unlink(missing_ok=True)
         except Exception:
             logger.debug("Failed to unlink session file %s", p)
+        try:
+            from api.upload import _session_attachment_dir
+
+            shutil.rmtree(_session_attachment_dir(sid), ignore_errors=True)
+        except Exception:
+            logger.debug("Failed to clean attachment dir for deleted session %s", sid)
         # Prune the per-session agent lock so deleted sessions don't leak
         # Lock entries in SESSION_AGENT_LOCKS forever.
         with SESSION_AGENT_LOCKS_LOCK:
