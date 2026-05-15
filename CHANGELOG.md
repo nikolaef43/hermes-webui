@@ -6,6 +6,8 @@
 
 - Docker startup no longer fails when a bind-mounted `~/.hermes/hermes-agent/.git/objects` tree contains read-only git object packs. The root init ownership pass now skips that git object subtree while still chowning the rest of `/home/hermeswebui`, so macOS Docker Desktop bind mounts can start WebUI without requiring writable ownership over agent git internals (fixes #2237).
 
+- Context-compression snapshot preservation now clears archived parent runtime fields (`active_stream_id`, `pending_user_message`, attachments, and start timestamp) before saving the old session id. This prevents a completed continuation session from leaving its parent looking permanently active/running after compression.
+
 ### Added
 
 - Cron detail prompt and output panels now have expand/collapse controls that

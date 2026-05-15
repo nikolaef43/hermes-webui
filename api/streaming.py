@@ -1619,7 +1619,24 @@ def _preserve_pre_compression_snapshot(s, old_sid: str) -> None:
             saved_snapshot = bool(getattr(s, 'pre_compression_snapshot', False))
             s.session_id = old_sid
             s.pre_compression_snapshot = True
+            # Stage-359 / PR #2295: clear runtime stream-state fields on the
+            # archived snapshot so the sidebar does not reopen the parent as
+            # a permanently-running session while the child already holds the
+            # completed answer. The continuation session's live state is
+            # restored from saved_* locals in the finally block.
+            saved_active_stream_id = getattr(s, 'active_stream_id', None)
+            saved_pending_user_message = getattr(s, 'pending_user_message', None)
+            saved_pending_attachments = list(getattr(s, 'pending_attachments', []) or [])
+            saved_pending_started_at = getattr(s, 'pending_started_at', None)
+            s.active_stream_id = None
+            s.pending_user_message = None
+            s.pending_attachments = []
+            s.pending_started_at = None
             try:
+                # skip_index=False so the snapshot appears in _index.json with
+                # the pre_compression_snapshot marker. The sidebar projection
+                # (#2285) reads that marker to hide the snapshot from active
+                # rows while keeping the JSON discoverable for lineage traversal.
                 s.save(touch_updated_at=False, skip_index=False)
                 logger.info(
                     "Preserved pre-compression session %s (%d messages) to disk",
@@ -1628,6 +1645,10 @@ def _preserve_pre_compression_snapshot(s, old_sid: str) -> None:
             finally:
                 s.session_id = saved_sid
                 s.pre_compression_snapshot = saved_snapshot
+                s.active_stream_id = saved_active_stream_id
+                s.pending_user_message = saved_pending_user_message
+                s.pending_attachments = saved_pending_attachments
+                s.pending_started_at = saved_pending_started_at
             return
         # Existing file is already at least as complete as memory; stamp only
         # the snapshot marker so index/sidebar projection can hide it without
@@ -1919,6 +1940,37 @@ def _drop_checkpointed_current_user_from_context(messages, msg_text):
     if current_user_key and _message_identity(history[-1]) == current_user_key:
         return history[:-1]
     return history
+
+
+def _save_pre_compression_snapshot(session, old_session_id):
+    """Persist the archived pre-compression session without live turn state.
+
+    During context compression the same ``Session`` object is reused for the new
+    continuation id.  Before the final continuation save clears
+    ``active_stream_id`` and ``pending_*``, we also preserve an old-id snapshot so
+    the full pre-compression transcript remains recoverable.  That archived
+    parent must not keep the current stream bookkeeping, otherwise the sidebar can
+    reopen the parent as a permanently running session while the child already
+    contains the completed answer.
+    """
+    saved_sid = session.session_id
+    saved_active_stream_id = getattr(session, 'active_stream_id', None)
+    saved_pending_user_message = getattr(session, 'pending_user_message', None)
+    saved_pending_attachments = list(getattr(session, 'pending_attachments', []) or [])
+    saved_pending_started_at = getattr(session, 'pending_started_at', None)
+    session.session_id = old_session_id
+    session.active_stream_id = None
+    session.pending_user_message = None
+    session.pending_attachments = []
+    session.pending_started_at = None
+    try:
+        session.save(touch_updated_at=False, skip_index=True)
+    finally:
+        session.session_id = saved_sid
+        session.active_stream_id = saved_active_stream_id
+        session.pending_user_message = saved_pending_user_message
+        session.pending_attachments = saved_pending_attachments
+        session.pending_started_at = saved_pending_started_at
 
 
 def _stream_writeback_is_current(session, stream_id):
