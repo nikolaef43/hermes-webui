@@ -12,6 +12,9 @@
 
 ### Fixed
 
+- Silent-failure detection no longer treats old assistant messages in a shrunk
+  result history as proof that the current turn produced a new assistant reply.
+
 - **PR #2270** by @Michaelyklam (closes #2226) — Firefox Android PWA installs from `/session/<id>` pages now resolve the Hermes manifest and icons instead of falling back to a generated letter icon. The dynamic `<base href>` script now runs before manifest/favicon links, `/session/manifest.json` and `/session/manifest.webmanifest` return the real manifest JSON, and session-prefixed manifest routes are now marked as public auth-skip routes. Adds 211 lines of regression coverage for the manifest responses and the session-prefixed 512px icon path.
 
 - **PR #2268** by @eleboucher — `docker_init.bash` no longer fails under Kubernetes `runAsUser` configurations where the running UID has no `/etc/passwd` entry. Pre-fix, the bare `whoami` invocation aborted the script under `set -e` because `whoami` exited with a non-zero status on missing-passwd UIDs. Now falls back to a synthetic `uid-<numeric-uid>` name when `whoami` fails (`whoami 2>/dev/null || echo "uid-$(id -u)"`). Two-line change.

@@ -140,17 +140,16 @@ def _has_new_assistant_reply(all_messages: list, prev_count: int) -> bool:
     messages at index >= prev_count are inspected so that historical assistant
     replies don't mask a silent failure on the current turn.
 
-    If ``len(all_messages) < prev_count`` (an edge-case shrink) we fall back
-    to scanning the full list — this keeps behaviour consistent with the
-    original code when offsets don't cleanly apply.  When ``len == prev_count``,
-    there are no new messages and we return False.
+    If ``len(all_messages) < prev_count`` (an edge-case shrink), there is no
+    reliable new-message slice to inspect. Treat that as "no new assistant
+    reply" so stale historical assistant replies cannot mask a silent failure.
+    When ``len == prev_count``, there are no new messages and we return False.
     """
     if len(all_messages) > prev_count:
         # Normal case: new messages appended beyond the pre-turn history.
         candidates = all_messages[prev_count:]
     elif len(all_messages) < prev_count:
-        # Edge-case shrink — scan everything as fallback.
-        candidates = all_messages
+        return False
     else:
         # Same length. In production this means no new messages were appended.
         # However, some test fixtures replace the entire message list rather
