@@ -24,6 +24,7 @@ from api.config import (
     STREAMS, STREAMS_LOCK, CANCEL_FLAGS, AGENT_INSTANCES, STREAM_PARTIAL_TEXT,
     STREAM_REASONING_TEXT, STREAM_LIVE_TOOL_CALLS,
     STREAM_GOAL_RELATED, PENDING_GOAL_CONTINUATION,
+    STREAM_LAST_EVENT_ID,
     LOCK, SESSIONS, SESSION_DIR,
     _get_session_agent_lock, _set_thread_env, _clear_thread_env,
     register_active_run, update_active_run, unregister_active_run,
@@ -2622,7 +2623,18 @@ def _run_agent_streaming(
             return
         if run_journal is not None:
             try:
-                run_journal.append_sse_event(event, data)
+                journaled = run_journal.append_sse_event(event, data)
+                # Stage-364: propagate journal event_id via a side-channel dict
+                # (STREAM_LAST_EVENT_ID) instead of changing the queue tuple
+                # shape — keeping the 2-tuple shape preserves backward
+                # compatibility for tests and any non-SSE queue consumer. The
+                # SSE handler reads this dict at emit time to populate `id:`
+                # on every live frame, which lets the frontend's cursor
+                # advance during live streaming and prevents replay from
+                # double-rendering tokens after a mid-stream error→reconnect.
+                event_id = (journaled or {}).get('event_id') if isinstance(journaled, dict) else None
+                if event_id:
+                    STREAM_LAST_EVENT_ID[stream_id] = event_id
             except Exception:
                 logger.debug("Failed to append run journal event %s for stream %s", event, stream_id, exc_info=True)
         try:
@@ -4624,6 +4636,7 @@ def _run_agent_streaming(
             STREAM_REASONING_TEXT.pop(stream_id, None)  # Clean up reasoning trace (#1361 §A)
             STREAM_LIVE_TOOL_CALLS.pop(stream_id, None)  # Clean up tool calls (#1361 §B)
             STREAM_GOAL_RELATED.pop(stream_id, None)  # Clean up goal-related flag (#1932)
+            STREAM_LAST_EVENT_ID.pop(stream_id, None)  # Clean up event_id pointer (stage-364)
             unregister_active_run(stream_id)
             # NOTE: do NOT discard PENDING_GOAL_CONTINUATION here. The marker
             # is set by goal_continue (line ~3328) inside the SAME function

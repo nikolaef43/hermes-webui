@@ -876,6 +876,7 @@ from api.config import (
     STREAMS,
     STREAMS_LOCK,
     CANCEL_FLAGS,
+    STREAM_LAST_EVENT_ID,
     SERVER_START_TIME,
     _resolve_cli_toolsets,
     _INDEX_HTML_PATH,
@@ -5917,7 +5918,15 @@ def _handle_sse_stream(handler, parsed):
                 handler.wfile.write(b": heartbeat\n\n")
                 handler.wfile.flush()
                 continue
-            _sse(handler, event, data)
+            # Stage-364: emit `id:` from STREAM_LAST_EVENT_ID side-channel so
+            # the frontend's `_lastRunJournalSeq` cursor advances during live
+            # streaming. Without this, mid-stream error→replay would arrive
+            # with after_seq=0 and double-render every journaled event.
+            event_id = STREAM_LAST_EVENT_ID.get(stream_id)
+            if event_id:
+                _sse_with_id(handler, event, data, event_id)
+            else:
+                _sse(handler, event, data)
             if event in ("stream_end", "error", "cancel"):
                 break
     except _CLIENT_DISCONNECT_ERRORS:
