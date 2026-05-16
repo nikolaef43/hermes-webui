@@ -25,6 +25,8 @@
 
 - **PR #2333** by @Michaelyklam (closes #2312 follow-up #1) — Removed dead production helper `_save_pre_compression_snapshot()` at `api/streaming.py:1945`. The production path now uses `_preserve_pre_compression_snapshot()` exclusively (which must index snapshots with `skip_index=False` for sidebar filtering). The dead helper was only called from `tests/test_compression_snapshot_runtime_clear.py`; the test is retargeted to exercise the actual production helper instead. Closes follow-up item #1 from the v0.51.66 review (#2312).
 
+- **PR #2334** by @Michaelyklam (refs #2097) — Turn journal appends now take an advisory `flock` around each JSONL event write and fsync when Unix file locks are available. This keeps oversized submitted-message events from interleaving at the byte level if a future deployment runs multiple WebUI worker processes against the same state directory, while preserving the previous best-effort append path on platforms without `fcntl`.
+
 ## [v0.51.68] — 2026-05-15 — Release AR (stage-361 — 4-PR follow-up batch — #2315 profile skill seeding + #2317 theme fallback + #2318 mobile stream defer + #2319 chat upload relocation — with Opus-caught vision-model regression fix)
 
 ### Added
@@ -33,7 +35,6 @@
 - **PR #2319** by @Michaelyklam — Chat file uploads now land in a session-scoped attachment inbox instead of cluttering the active workspace root. By default uploads are stored under `~/.hermes/webui/attachments/<session_id>/`; operators can override the root with `HERMES_WEBUI_ATTACHMENT_DIR`, and the agent still receives the absolute uploaded file path for context. Archive extraction stays workspace-scoped (it's an explicit workspace operation). README updated to document the new default location. **Stage-361 maintainer fix applied inline**: Opus advisor caught that `_build_native_multimodal_message` at `api/streaming.py:787` required uploads to be under `workspace_root`, which would have silently dropped every image upload for vision-capable models once the inbox moved outside the workspace. The fix adds `_attachment_root()` (from `api/upload.py`) as a second allowed location, with 3 regression tests covering the new code path AND verifying the original workspace + cross-root rejection paths still work.
 
 ### Fixed
-
 
 - **PR #2315** by @Michaelyklam (closes #2305, refs #749) — WebUI profile creation now seeds bundled profile skills for newly-created non-cloned profiles, matching the CLI's `hermes profile create` behaviour. Pre-fix, creating a profile via Settings → New Profile (without checking "Clone from active profile") left the profile's `skills/` directory empty, which was inconsistent with CLI-created profiles that get the full bundled-skills overlay. The fix calls `seed_profile_skills(profile_path, quiet=True)` after `profile_path.mkdir()` when `clone_from is None`. Cloned profiles still inherit skills from their source — they don't get a second bundled-skills overlay. Seed failures (e.g. `hermes_cli` unavailable in Docker fallback) are logged as warnings, not fatal — profile creation still succeeds.
 
