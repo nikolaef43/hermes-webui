@@ -24,6 +24,8 @@
 
 ### Fixed
 
+- **PR TBD** by @franksong2702 — Clearing stale stream runtime flags no longer refreshes a session's `updated_at`, so old compressed continuations should not jump back to the top of the sidebar just because WebUI repaired a dead `active_stream_id` during a read/list request.
+
 - **PR #2322** by @Michaelyklam (refs #2271) — LAN Ollama models selected from endpoint-discovered `custom:<host>-<port>` / `custom:<host>:<port>` picker entries now route through the configured `ollama` provider and base URL instead of surfacing a missing `CUSTOM_*_API_KEY` error. The picker still surfaces endpoint-discovered entries; the fix is to recognize them as UI routing hints matching the configured local-server base URL and resolve them via the actual `ollama` provider.
 
 - **PR #2326** by @Michaelyklam (closes #2232) — Legacy `hermes` CLI toolset alias is now normalized to `hermes-cli` + `hermes-api-server` when WebUI resolves CLI toolsets from shared Hermes config. Modern Hermes Agent exposes the composite under those two names; older configs that still contain the legacy `hermes` toolset name no longer surface as "unknown toolset" warnings.
